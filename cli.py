@@ -199,8 +199,7 @@ Examples:
                 "are installed.",
                 file=sys.stderr,
             )
-            print("\n✨ Process completed successfully!")
-            return
+            sys.exit(1)
 
         try:
             sim = DisruptionSimulator(str(dataset_path))
@@ -211,6 +210,7 @@ Examples:
                 f"\n⚠️  Disruption simulation failed: {exc}",
                 file=sys.stderr,
             )
+            sys.exit(1)
 
     print("\n✨ Process completed successfully!")
 
