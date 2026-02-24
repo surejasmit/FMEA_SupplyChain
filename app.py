@@ -15,6 +15,7 @@ from datetime import datetime
 import logging
 from PIL import Image
 import io
+import torch
 
 # Add src directory to path
 sys.path.append(str(Path(__file__).parent / 'src'))
@@ -335,6 +336,18 @@ def main():
         # Output format
         output_format = st.selectbox("Export Format:", ["Excel", "CSV"])
         
+        if selected_model != "Rule-based (No LLM)":
+            st.markdown("---")
+            st.markdown("### 🖥️ GPU Status")
+            if torch.cuda.is_available():
+                mem_allocated = torch.cuda.memory_allocated() / 1024**3
+                mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                st.success(f"GPU Available: {torch.cuda.get_device_name(0)}")
+                st.write(f"Memory Allocated: {mem_allocated:.2f} GB")
+                st.write(f"Memory Reserved: {mem_reserved:.2f} GB")
+            else:
+                st.warning("GPU Not Available - Using CPU")
+
         st.markdown("---")
         st.markdown("### 📖 About")
         st.info("""
@@ -348,6 +361,7 @@ def main():
         - Automated risk scoring
         - Visual analytics
         - Export capabilities
+        - **NEW: Resource Management & OOM Protection**
         """)
     
     # Main content area
