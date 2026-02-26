@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "run_id": "20260222_182315_022",
+    "timestamp": "2026-02-22T18:23:15.022451",
+    "label": "Run 2026-02-22 18:23:15",
+    "row_count": 1,
+    "average_rpn": 315.0,
+    "critical_count": 0
+  },
+  "fmea_data": [
+    {
+      "Failure Mode": "the rolling fan responses irregular and in some cases the system restarts automatically without resolving the overheating issue",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "General",
+      "Existing Controls": "Not specified",
+      "Severity": 5,
+      "Occurrence": 7,
+      "Detection": 9,
+      "Rpn": 315,
+      "Action Priority": "High",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "During operation of the CNC milling machine, the spindle motor intimately overheats despite normal load conditions. The temperature sensor sometimes reports delay or inconsistent readings and vibration level increases slightly before shutdown. The rolling fan responses irregular and in some cases the system restarts automatically without resolving the overheating issue.",
+      "Sentiment": 0.06111111111111111
+    }
+  ]
+}

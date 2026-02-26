@@ -1,0 +1,72 @@
+{
+  "metadata": {
+    "run_id": "20260223_232833_083",
+    "timestamp": "2026-02-23T23:28:33.083334",
+    "label": "Run 2026-02-23 23:28:33",
+    "row_count": 4,
+    "average_rpn": 240.75,
+    "critical_count": 0
+  },
+  "fmea_data": [
+    {
+      "Failure Mode": "steering wheel vibration at speeds above 60 mph, possible alignment issue",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "steering wheel vibration at speeds above 60 mph, possible alignment issue",
+      "Existing Controls": "Not specified",
+      "Severity": 5,
+      "Occurrence": 7,
+      "Detection": 9,
+      "Rpn": 315,
+      "Action Priority": "High",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "Steering wheel vibration at speeds above 60 mph, possible alignment issue.",
+      "Sentiment": 0.0
+    },
+    {
+      "Failure Mode": "the brake pedal feels spongy and unresponsive during cold weather conditions.",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "the brake pedal feels spongy and unresponsive during cold weather conditions",
+      "Existing Controls": "Not specified",
+      "Severity": 4,
+      "Occurrence": 6,
+      "Detection": 9,
+      "Rpn": 216,
+      "Action Priority": "Medium",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "The brake pedal feels spongy and unresponsive during cold weather conditions.",
+      "Sentiment": -0.6
+    },
+    {
+      "Failure Mode": "engine overheating reported after 30 minutes of highway driving.",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "engine overheating reported after 30 minutes of highway driving",
+      "Existing Controls": "Not specified",
+      "Severity": 4,
+      "Occurrence": 6,
+      "Detection": 9,
+      "Rpn": 216,
+      "Action Priority": "Medium",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "Engine overheating reported after 30 minutes of highway driving.",
+      "Sentiment": 0.0
+    },
+    {
+      "Failure Mode": "battery drains overnight even when vehicle is turned off.",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "battery drains overnight even when vehicle is turned off",
+      "Existing Controls": "Not specified",
+      "Severity": 4,
+      "Occurrence": 6,
+      "Detection": 9,
+      "Rpn": 216,
+      "Action Priority": "Medium",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "Battery drains overnight even when vehicle is turned off.",
+      "Sentiment": 0.0
+    }
+  ]
+}

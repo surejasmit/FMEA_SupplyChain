@@ -222,6 +222,159 @@ def plot_top_risks(fmea_df, top_n=10):
     return fig
 
 
+def plot_severity_occurrence_heatmap(fmea_df):
+    """
+    Plot Severity vs Occurrence Risk Heatmap
+    X-axis: Occurrence (1-10)
+    Y-axis: Severity (1-10)
+    Cell color-coded by RPN intensity (Low: Green, Medium: Yellow, High: Red)
+    """
+    # Create heatmap array (use RPN values for color intensity)
+    heatmap_array = []
+    hover_text = []
+    
+    for severity in range(10, 0, -1):  # Reverse to show severity high at top
+        heatmap_row = []
+        hover_row = []
+        
+        for occurrence in range(1, 11):
+            cell_data = fmea_df[
+                (fmea_df['Severity'] == severity) & 
+                (fmea_df['Occurrence'] == occurrence)
+            ]
+            
+            if len(cell_data) > 0:
+                count = len(cell_data)
+                avg_rpn = cell_data['Rpn'].mean()
+                heatmap_row.append(avg_rpn)
+                hover_row.append(f"Severity: {severity}<br>Occurrence: {occurrence}<br>Count: {count}<br>Avg RPN: {avg_rpn:.1f}")
+            else:
+                heatmap_row.append(0)
+                hover_row.append(f"Severity: {severity}<br>Occurrence: {occurrence}<br>Count: 0<br>Avg RPN: 0")
+        
+        heatmap_array.append(heatmap_row)
+        hover_text.append(hover_row)
+    
+    # Create figure with color scale
+    fig = go.Figure(data=go.Heatmap(
+        z=heatmap_array,
+        x=list(range(1, 11)),
+        y=list(range(10, 0, -1)),
+        hovertext=hover_text,
+        hoverinfo="text",
+        colorscale=[
+            [0, '#2ca02c'],      # Green - Low Risk
+            [0.3, '#2ca02c'],
+            [0.4, '#ffbb78'],    # Yellow - Medium Risk
+            [0.6, '#ffbb78'],
+            [0.7, '#ff7f0e'],    # Orange - High Risk
+            [0.85, '#d62728'],   # Red - Critical Risk
+            [1, '#8B0000']       # Dark Red - Extreme Risk
+        ],
+        colorbar=dict(title="Average RPN")
+    ))
+    
+    fig.update_layout(
+        title='Risk Heatmap: Severity vs Occurrence',
+        xaxis_title='Occurrence (1-10)',
+        yaxis_title='Severity (1-10)',
+        height=700,
+        width=700
+    )
+    
+    return fig
+
+
+def get_critical_risks(fmea_df, rpn_threshold=250):
+    """
+    Get critical risks exceeding RPN threshold
+    
+    Args:
+        fmea_df: FMEA DataFrame
+        rpn_threshold: RPN threshold for critical risks
+        
+    Returns:
+        DataFrame with critical risks and count
+    """
+    critical_risks = fmea_df[fmea_df['Rpn'] >= rpn_threshold]
+    return critical_risks, len(critical_risks)
+
+
+def display_risk_summary_panel(fmea_df, rpn_threshold=250):
+    """
+    Display Risk Summary Panel with key metrics
+    
+    Args:
+        fmea_df: FMEA DataFrame
+        rpn_threshold: RPN threshold for critical risks
+    """
+    col1, col2, col3, col4 = st.columns(4)
+    
+    # Total failure modes
+    with col1:
+        st.metric(
+            label="📊 Total Failure Modes",
+            value=len(fmea_df)
+        )
+    
+    # Critical risk count
+    critical_risks, critical_count = get_critical_risks(fmea_df, rpn_threshold)
+    with col2:
+        st.metric(
+            label="🔴 Critical Risks (RPN ≥ threshold)",
+            value=critical_count,
+            delta="High Priority" if critical_count > 0 else None
+        )
+    
+    # Average RPN
+    with col3:
+        avg_rpn = fmea_df['Rpn'].mean()
+        st.metric(
+            label="📈 Average RPN",
+            value=f"{avg_rpn:.1f}"
+        )
+    
+    # Highest RPN entry
+    with col4:
+        max_rpn = fmea_df['Rpn'].max()
+        max_idx = fmea_df['Rpn'].idxmax()
+        if pd.notna(max_idx):
+            highest_failure = fmea_df.loc[max_idx, 'Failure Mode']
+            st.metric(
+                label="⚠️ Highest RPN",
+                value=int(max_rpn),
+                delta=f"{highest_failure[:30]}..." if len(str(highest_failure)) > 30 else highest_failure
+            )
+        else:
+            st.metric(
+                label="⚠️ Highest RPN",
+                value=int(max_rpn)
+            )
+
+
+def display_critical_alert_banner(fmea_df, rpn_threshold=250):
+    """
+    Display alert banner for critical risks
+    
+    Args:
+        fmea_df: FMEA DataFrame
+        rpn_threshold: RPN threshold for critical risks
+    """
+    critical_risks, critical_count = get_critical_risks(fmea_df, rpn_threshold)
+    
+    if critical_count > 0:
+        alert_message = f"⚠️ **CRITICAL ALERT**: {critical_count} failure mode(s) exceed RPN threshold of {rpn_threshold}. Immediate action required!"
+        st.error(alert_message)
+        
+        # Show details of critical risks
+        with st.expander("🔍 View Critical Risks Details"):
+            critical_display = critical_risks[['Failure Mode', 'Effect', 'Severity', 'Occurrence', 'Detection', 'Rpn', 'Action Priority']].copy()
+            critical_display = critical_display.sort_values('Rpn', ascending=False)
+            st.dataframe(critical_display, use_container_width=True, height=300)
+    
+    return critical_count > 0
+
+
 def extract_text_from_image(image_file):
     """Extract text from image using OCR"""
     try:
@@ -547,6 +700,20 @@ def main():
             
             fmea_df = st.session_state['fmea_df']
             
+            # ===== CRITICAL ALERT BANNER IN RESULTS SECTION =====
+            st.markdown("---")
+            st.markdown("### ⚠️ Critical Risk Alert")
+            
+            # Set a default threshold for results display
+            default_alert_threshold = 250
+            critical_risks_results, critical_count_results = get_critical_risks(fmea_df, default_alert_threshold)
+            
+            if critical_count_results > 0:
+                alert_msg = f"🚨 **ATTENTION**: {critical_count_results} failure mode(s) have RPN ≥ {default_alert_threshold}. Review the highlighted rows below."
+                st.error(alert_msg)
+            else:
+                st.info(f"✅ No critical risks detected. All failure modes have RPN < {default_alert_threshold}.")
+            
             # Display metrics
             st.markdown("---")
             st.markdown("### 📈 Key Metrics")
@@ -557,7 +724,7 @@ def main():
             st.markdown("### 📋 FMEA Table")
             
             # Add filtering options
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 priority_filter = st.multiselect(
                     "Filter by Priority:",
@@ -568,12 +735,32 @@ def main():
             with col2:
                 rpn_threshold = st.slider("Minimum RPN:", 0, 1000, 0)
             
+            with col3:
+                highlight_critical = st.checkbox(
+                    "Highlight Critical Risks (RPN ≥ 250)",
+                    value=True,
+                    help="Visually highlight rows with critical RPN values"
+                )
+            
             filtered_df = fmea_df[
                 (fmea_df['Action Priority'].isin(priority_filter)) &
                 (fmea_df['Rpn'] >= rpn_threshold)
             ]
             
-            st.dataframe(filtered_df, use_container_width=True, height=400)
+            # Apply visual styling to highlight critical risks
+            if highlight_critical and not filtered_df.empty:
+                def highlight_critical_row(row):
+                    if row['Rpn'] >= 250:
+                        return ['background-color: #ffe6e6'] * len(row)  # Light red background
+                    elif row['Rpn'] >= 100:
+                        return ['background-color: #fff5e6'] * len(row)  # Light yellow background
+                    else:
+                        return [''] * len(row)  # No highlight
+                
+                styled_df = filtered_df.style.apply(highlight_critical_row, axis=1)
+                st.dataframe(styled_df, use_container_width=True, height=400)
+            else:
+                st.dataframe(filtered_df, use_container_width=True, height=400)
             
             # Export options
             st.markdown("---")
@@ -1301,6 +1488,41 @@ def main():
         
         if 'fmea_df' in st.session_state:
             fmea_df = st.session_state['fmea_df']
+            
+            # ===== FEATURE 3: RISK SUMMARY PANEL =====
+            st.markdown("### 📊 Risk Summary Panel")
+            display_risk_summary_panel(fmea_df)
+            
+            st.markdown("---")
+            
+            # ===== FEATURE 2: THRESHOLD-BASED CRITICAL ALERT SYSTEM =====
+            st.markdown("### ⚠️ Critical Risk Alert System")
+            
+            # Add configurable RPN threshold
+            col_threshold1, col_threshold2 = st.columns([3, 1])
+            with col_threshold1:
+                rpn_threshold = st.slider(
+                    "Set RPN Threshold for Critical Alerts",
+                    min_value=50,
+                    max_value=1000,
+                    value=250,
+                    step=10,
+                    help="Failure modes with RPN at or above this threshold will be flagged as critical"
+                )
+            
+            # Display critical alert banner
+            has_critical = display_critical_alert_banner(fmea_df, rpn_threshold)
+            
+            st.markdown("---")
+            
+            # ===== FEATURE 1: SEVERITY VS OCCURRENCE RISK HEATMAP =====
+            st.markdown("### 🔥 Severity vs Occurrence Risk Heatmap")
+            st.plotly_chart(plot_severity_occurrence_heatmap(fmea_df), use_container_width=True)
+            
+            st.markdown("---")
+            
+            # Existing visualizations
+            st.markdown("### 📈 Additional Visualizations")
             
             # RPN Distribution
             st.plotly_chart(plot_rpn_distribution(fmea_df), use_container_width=True)

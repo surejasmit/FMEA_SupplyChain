@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "run_id": "20260222_180348_474",
+    "timestamp": "2026-02-22T18:03:48.474415",
+    "label": "Run 2026-02-22 18:03:48",
+    "row_count": 1,
+    "average_rpn": 540.0,
+    "critical_count": 1
+  },
+  "fmea_data": [
+    {
+      "Failure Mode": "during operation of c and c milling machine, the spindle motor intimately overheats despite normal l",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "so coffee went through my 15,000 temp death battery when i was about 440c?",
+      "Existing Controls": "Not specified",
+      "Severity": 10,
+      "Occurrence": 6,
+      "Detection": 9,
+      "Rpn": 540,
+      "Action Priority": "Critical",
+      "Recommended Action": "URGENT: Immediate action required | Immediate design review required | Implement redundant safety systems | Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "During operation of C and C milling machine, the spindle motor intimately overheats despite normal load conditions, the temperature sensor, sometimes reports delay or inconsistent readings and vibration levels increases. So coffee went through my 15,000 temp Death battery when I was about 440C?",
+      "Sentiment": 0.175
+    }
+  ]
+}

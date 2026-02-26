@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "run_id": "20260222_173603_112",
+    "timestamp": "2026-02-22T17:36:03.112508",
+    "label": "Run 2026-02-22 17:36:03",
+    "row_count": 1,
+    "average_rpn": 216.0,
+    "critical_count": 0
+  },
+  "fmea_data": [
+    {
+      "Failure Mode": "and we would try to decrease...",
+      "Effect": "Functionality impacted",
+      "Cause": "Under investigation",
+      "Component": "General",
+      "Existing Controls": "Not specified",
+      "Severity": 4,
+      "Occurrence": 6,
+      "Detection": 9,
+      "Rpn": 216,
+      "Action Priority": "Medium",
+      "Recommended Action": "Implement preventive maintenance | Improve detection methods | Add monitoring systems",
+      "Original Text": "and we would try to decrease...",
+      "Sentiment": 0.0
+    }
+  ]
+}
