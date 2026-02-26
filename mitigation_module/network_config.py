@@ -12,8 +12,13 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_PATH = os.path.join(_BASE_DIR, 'config', 'network.yaml')
 
 # Load the configuration once
-with open(_CONFIG_PATH, 'r') as f:
-    _config = yaml.safe_load(f)
+try:
+    with open(_CONFIG_PATH, 'r') as f:
+        _config = yaml.safe_load(f) or {}
+except (yaml.YAMLError, IOError) as e:
+    print(f"CRITICAL ERROR: Failed to load network configuration from {_CONFIG_PATH}")
+    print(f"Error details: {e}")
+    _config = {}
 
 # =========================================
 # DYNAMIC WAREHOUSE CONFIGURATION
