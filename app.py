@@ -147,8 +147,17 @@ def load_config():
     """Load configuration from YAML file"""
     config_path = Path('config/config.yaml')
     if config_path.exists():
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+        try:
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            st.error(f"Error parsing configuration file: {e}")
+            logger.error(f"YAML parsing error: {e}")
+            return {}
+        except Exception as e:
+            st.error(f"Error reading configuration file: {e}")
+            logger.error(f"Error reading config: {e}")
+            return {}
     else:
         st.error("Configuration file not found!")
         return {}
@@ -423,6 +432,37 @@ def main():
         "ℹ️ Help"
     ])
     
+    # --- Constants for input validation ---
+    MAX_FILE_SIZE_MB = 200
+    MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+    ALLOWED_IMAGE_TYPES = ['png', 'jpg', 'jpeg']
+    ALLOWED_STRUCTURED_TYPES = ['csv', 'xlsx', 'xls']
+    ALLOWED_OCR_TYPES = ['jpg', 'jpeg', 'png', 'pdf']
+
+    def validate_uploaded_file(uploaded_file, allowed_types, max_size_bytes=MAX_FILE_SIZE_BYTES, max_size_mb=MAX_FILE_SIZE_MB):
+        """Validate an uploaded file for size, emptiness, and type.
+        Returns (is_valid, error_message). If valid, error_message is None."""
+        if uploaded_file is None:
+            return False, "⚠️ Please upload a file before generating FMEA."
+        if uploaded_file.size == 0:
+            return False, "⚠️ The uploaded file is empty (0 bytes). Please upload a valid file."
+        if uploaded_file.size > max_size_bytes:
+            size_mb = uploaded_file.size / (1024 * 1024)
+            return False, f"⚠️ File size ({size_mb:.1f} MB) exceeds the {max_size_mb} MB limit. Please upload a smaller file."
+        file_ext = uploaded_file.name.split('.')[-1].lower()
+        if file_ext not in allowed_types:
+            return False, f"⚠️ Unsupported file format '.{file_ext}'. Allowed types: {', '.join(allowed_types)}."
+        return True, None
+
+    def show_file_info(uploaded_file):
+        """Display file upload success info."""
+        size_kb = uploaded_file.size / 1024
+        if size_kb > 1024:
+            size_str = f"{size_kb / 1024:.1f} MB"
+        else:
+            size_str = f"{size_kb:.1f} KB"
+        st.success(f"✅ File uploaded successfully: **{uploaded_file.name}** ({size_str})")
+
     with tab1:
         st.markdown('<div class="sub-header">Generate FMEA</div>', unsafe_allow_html=True)
         
@@ -435,10 +475,12 @@ def main():
             if text_input_method == "Upload File":
                 uploaded_file = st.file_uploader(
                     "Upload image file (PNG, JPEG) - OCR will extract text",
-                    type=['png', 'jpg', 'jpeg']
+                    type=['png', 'jpg', 'jpeg'],
+                    help=f"Supported formats: PNG, JPG, JPEG. Max size: {MAX_FILE_SIZE_MB} MB."
                 )
                 
                 if uploaded_file:
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                     # Validate file
                     is_valid, error_msg = validate_file_upload(uploaded_file)
                     if not is_valid:
@@ -446,6 +488,18 @@ def main():
                     else:
                         # Display uploaded image
                         col1, col2 = st.columns([1, 2])
+=======
+                    # Validate uploaded file
+                    is_valid, error_msg = validate_uploaded_file(uploaded_file, ALLOWED_IMAGE_TYPES)
+                    if not is_valid:
+                        st.error(error_msg)
+                        st.stop()
+                    
+                    show_file_info(uploaded_file)
+
+                    # Display uploaded image
+                    col1, col2 = st.columns([1, 2])
+>>>>>>> main
                     
                     with col1:
                         st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
@@ -460,6 +514,7 @@ def main():
                                 st.markdown("**Extracted Text:**")
                                 st.text_area("", extracted_text, height=150, key="extracted", disabled=True)
                                 
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                                 if "Error" not in extracted_text and "No text found" not in extracted_text:
                                     # Validate extracted text length
                                     is_valid, error_msg = validate_text_input(extracted_text)
@@ -476,6 +531,28 @@ def main():
                                             fmea_df = generator.generate_from_text(texts, is_file=False)
                                             st.session_state['fmea_df'] = fmea_df
                                             st.session_state['fmea_saved'] = False
+=======
+                                # Validate OCR output
+                                if not extracted_text or not extracted_text.strip():
+                                    st.error("⚠️ OCR failed to extract any readable text from the image. Please upload a clearer image.")
+                                    st.stop()
+                                elif "Error" in extracted_text or "No text found" in extracted_text:
+                                    st.error(extracted_text)
+                                    st.stop()
+                                else:
+                                    with st.spinner("Generating FMEA from extracted text..."):
+                                        generator = initialize_generator(config)
+                                        # Split text into lines
+                                        texts = [line.strip() for line in extracted_text.split('\n') if line.strip()]
+                                        if not texts:
+                                            st.error("⚠️ OCR extracted text contains no usable content. Please try a different image.")
+                                            st.stop()
+                                        fmea_df = generator.generate_from_text(texts, is_file=False)
+                                        st.session_state['fmea_df'] = fmea_df
+                else:
+                    st.info("📤 Please upload an image file (PNG, JPG, JPEG) to begin.")
+                                        st.session_state['fmea_saved'] = False
+>>>>>>> main
                                 else:
                                     st.error(extracted_text)
             else:
@@ -486,6 +563,7 @@ def main():
                     placeholder="Paste customer reviews, failure reports, or complaint text here..."
                 )
                 
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                 if text_input and st.button("🚀 Generate FMEA", type="primary"):
                     # Validate text input
                     is_valid, error_msg = validate_text_input(text_input)
@@ -501,16 +579,34 @@ def main():
                             fmea_df = generator.generate_from_text(texts, is_file=False)
                             st.session_state['fmea_df'] = fmea_df
                             st.session_state['fmea_saved'] = False
+=======
+                generate_btn = st.button("🚀 Generate FMEA", type="primary")
+                if generate_btn:
+                    if not text_input or not text_input.strip():
+                        st.error("⚠️ Text input cannot be empty. Please enter reviews, reports, or complaint text before generating FMEA.")
+                        st.stop()
+                    texts = [line.strip() for line in text_input.split('\n') if line.strip()]
+                    if not texts:
+                        st.error("⚠️ No usable text found. Please enter valid content (not just whitespace or empty lines).")
+                        st.stop()
+                    with st.spinner("Analyzing text and generating FMEA..."):
+                        generator = initialize_generator(config)
+                        fmea_df = generator.generate_from_text(texts, is_file=False)
+                        st.session_state['fmea_df'] = fmea_df
+                        st.session_state['fmea_saved'] = False
+>>>>>>> main
 
         elif input_type == "📷 Scan Document (OCR)":
             st.markdown("**Upload an image or PDF for OCR extraction:**")
             uploaded_ocr_file = st.file_uploader(
                 "Upload JPG, JPEG, PNG, or PDF",
                 type=['jpg', 'jpeg', 'png', 'pdf'],
-                key='ocr_upload'
+                key='ocr_upload',
+                help=f"Supported formats: JPG, JPEG, PNG, PDF. Max size: {MAX_FILE_SIZE_MB} MB."
             )
 
             if uploaded_ocr_file:
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                 # Validate file
                 is_valid, error_msg = validate_file_upload(uploaded_ocr_file)
                 if not is_valid:
@@ -519,6 +615,19 @@ def main():
                     file_bytes = uploaded_ocr_file.getvalue()
                     file_name = uploaded_ocr_file.name.lower()
                     file_key = f"ocr_{uploaded_ocr_file.name}_{len(file_bytes)}_{uploaded_ocr_file.type}"
+=======
+                # Validate uploaded file
+                is_valid, error_msg = validate_uploaded_file(uploaded_ocr_file, ALLOWED_OCR_TYPES)
+                if not is_valid:
+                    st.error(error_msg)
+                    st.stop()
+                
+                show_file_info(uploaded_ocr_file)
+
+                file_bytes = uploaded_ocr_file.getvalue()
+                file_name = uploaded_ocr_file.name.lower()
+                file_key = f"ocr_{uploaded_ocr_file.name}_{len(file_bytes)}_{uploaded_ocr_file.type}"
+>>>>>>> main
 
                 if st.session_state.get('ocr_source_key') != file_key:
                     with st.spinner("Extracting text from document..."):
@@ -559,8 +668,10 @@ def main():
                 if st.button("🚀 Generate FMEA", type="primary"):
                     edited_text = st.session_state.get('ocr_edit', '').strip()
                     if not edited_text:
-                        st.warning("Please review or add text before generating FMEA.")
+                        st.error("⚠️ OCR failed to extract readable text, or the text field is empty. Please review, manually add text, or upload a clearer document.")
+                        st.stop()
                     else:
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                         # Validate text length
                         is_valid, error_msg = validate_text_input(edited_text)
                         if not is_valid:
@@ -575,6 +686,20 @@ def main():
                                 fmea_df = generator.generate_from_text(texts, is_file=False)
                                 st.session_state['fmea_df'] = fmea_df
                                 st.session_state['fmea_saved'] = False
+=======
+                        texts = [line.strip() for line in edited_text.split('\n') if line.strip()]
+                        if not texts:
+                            st.error("⚠️ No usable text content found. Please add valid text before generating FMEA.")
+                            st.stop()
+                        with st.spinner("Generating FMEA from OCR text..."):
+                            generator = initialize_generator(config)
+                            fmea_df = generator.generate_from_text(texts, is_file=False)
+                            st.session_state['fmea_df'] = fmea_df
+
+            else:
+                st.info("📤 Please upload an image or PDF document for OCR extraction.")
+                            st.session_state['fmea_saved'] = False
+>>>>>>> main
         
         elif input_type == "🎙️ Voice Input":
             st.markdown("**🎙️ Record your failure description:**")
@@ -618,9 +743,15 @@ def main():
                     )
 
                     if st.button("🚀 Generate FMEA from Voice Input", type="primary"):
+                        if not edited_text or not edited_text.strip():
+                            st.error("⚠️ Transcription text is empty. Please record again with a clear description.")
+                            st.stop()
+                        texts = [line.strip() for line in edited_text.split('\n') if line.strip()]
+                        if not texts:
+                            st.error("⚠️ No usable text found in the transcription. Please try again.")
+                            st.stop()
                         with st.spinner("Generating FMEA from voice input..."):
                             generator = initialize_generator(config)
-                            texts = [line.strip() for line in edited_text.split('\n') if line.strip()]
                             fmea_df = generator.generate_from_text(texts, is_file=False)
                             st.session_state['fmea_df'] = fmea_df
                 else:
@@ -630,10 +761,12 @@ def main():
         elif input_type == "Structured File (CSV/Excel)":
             uploaded_file = st.file_uploader(
                 "Upload structured FMEA file (CSV or Excel)",
-                type=['csv', 'xlsx', 'xls']
+                type=['csv', 'xlsx', 'xls'],
+                help=f"Supported formats: CSV, XLSX, XLS. Max size: {MAX_FILE_SIZE_MB} MB."
             )
             
             if uploaded_file:
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
                 # Validate file
                 is_valid, error_msg = validate_file_upload(uploaded_file)
                 if not is_valid:
@@ -654,6 +787,45 @@ def main():
                             st.error(f"❌ {str(e)}")
                         finally:
                             temp_path.unlink(missing_ok=True)
+=======
+                # Validate uploaded file
+                is_valid, error_msg = validate_uploaded_file(uploaded_file, ALLOWED_STRUCTURED_TYPES)
+                if not is_valid:
+                    st.error(error_msg)
+                    st.stop()
+                
+                show_file_info(uploaded_file)
+
+                # Validate file content (not empty data)
+                try:
+                    file_ext = uploaded_file.name.split('.')[-1].lower()
+                    if file_ext == 'csv':
+                        check_df = pd.read_csv(uploaded_file)
+                    else:
+                        check_df = pd.read_excel(uploaded_file)
+                    uploaded_file.seek(0)  # Reset file pointer after reading
+                    if check_df.empty or len(check_df) == 0:
+                        st.error("⚠️ The uploaded file contains no data rows. Please upload a file with valid data.")
+                        st.stop()
+                except Exception as e:
+                    st.error(f"⚠️ Unable to read the file. It may be corrupted or in an unexpected format. Error: {e}")
+                    st.stop()
+
+                temp_path = Path(f"temp_{uploaded_file.name}")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                if st.button("🚀 Generate FMEA", type="primary"):
+                    with st.spinner("Processing structured data..."):
+                        generator = initialize_generator(config)
+                        fmea_df = generator.generate_from_structured(str(temp_path))
+                        st.session_state['fmea_df'] = fmea_df
+                        st.session_state['fmea_saved'] = False
+                    
+                    temp_path.unlink()
+            else:
+                st.info("📤 Please upload a CSV or Excel file to begin.")
+>>>>>>> main
         
         else:  # Hybrid
             st.markdown("**Upload both structured and unstructured data:**")
@@ -665,7 +837,8 @@ def main():
                 structured_file = st.file_uploader(
                     "Upload CSV/Excel",
                     type=['csv', 'xlsx', 'xls'],
-                    key='structured'
+                    key='structured',
+                    help=f"Supported formats: CSV, XLSX, XLS. Max size: {MAX_FILE_SIZE_MB} MB."
                 )
                 if structured_file:
                     is_valid, error_msg = validate_file_upload(structured_file)
@@ -686,6 +859,7 @@ def main():
                     if not is_valid:
                         st.error(f"❌ {error_msg}")
             
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
             if (structured_file or unstructured_text) and st.button("🚀 Generate Hybrid FMEA", type="primary"):
                 # Validate inputs
                 valid = True
@@ -732,6 +906,70 @@ def main():
                                 structured_path.unlink(missing_ok=True)
                         except ValueError as e:
                             st.error(f"❌ {str(e)}")
+=======
+            generate_hybrid_btn = st.button("🚀 Generate Hybrid FMEA", type="primary")
+            if generate_hybrid_btn:
+                # Validate that at least one valid input is provided
+                has_valid_file = False
+                has_valid_text = False
+
+                if structured_file:
+                    is_valid, error_msg = validate_uploaded_file(structured_file, ALLOWED_STRUCTURED_TYPES)
+                    if not is_valid:
+                        st.error(error_msg)
+                        st.stop()
+                    has_valid_file = True
+                
+                if unstructured_text and unstructured_text.strip():
+                    has_valid_text = True
+                
+                if not has_valid_file and not has_valid_text:
+                    st.error("⚠️ Please provide at least one input: upload a structured file OR enter text manually.")
+                    st.stop()
+
+                # Validate structured file content if provided
+                if has_valid_file:
+                    show_file_info(structured_file)
+                    try:
+                        file_ext = structured_file.name.split('.')[-1].lower()
+                        if file_ext == 'csv':
+                            check_df = pd.read_csv(structured_file)
+                        else:
+                            check_df = pd.read_excel(structured_file)
+                        structured_file.seek(0)
+                        if check_df.empty or len(check_df) == 0:
+                            st.error("⚠️ The uploaded structured file contains no data rows.")
+                            st.stop()
+                    except Exception as e:
+                        st.error(f"⚠️ Unable to read the structured file. Error: {e}")
+                        st.stop()
+
+                with st.spinner("Processing hybrid data..."):
+                    generator = initialize_generator(config)
+                    
+                    structured_path = None
+                    text_data = None
+                    
+                    if has_valid_file:
+                        structured_path = Path(f"temp_structured_{structured_file.name}")
+                        with open(structured_path, "wb") as f:
+                            f.write(structured_file.getbuffer())
+                    
+                    if has_valid_text:
+                        # Convert text to list of lines
+                        text_data = [line.strip() for line in unstructured_text.split('\n') if line.strip()]
+                    
+                    fmea_df = generator.generate_hybrid(
+                        structured_file=str(structured_path) if structured_path else None,
+                        text_input=text_data if text_data else None
+                    )
+                    st.session_state['fmea_df'] = fmea_df
+                    st.session_state['fmea_saved'] = False
+                    
+                    # Cleanup
+                    if structured_path:
+                        structured_path.unlink()
+>>>>>>> main
         
         # Display results
         if 'fmea_df' in st.session_state:

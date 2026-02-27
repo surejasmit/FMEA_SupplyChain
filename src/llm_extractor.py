@@ -10,12 +10,11 @@ from transformers import (
     pipeline,
     BitsAndBytesConfig,
 )
-from typing import Dict, List, Optional, Union
+from typing import Dict, List
 import json
 import re
 import logging
 import datetime
-import os
 from pathlib import Path
 from tqdm import tqdm
 import signal
@@ -56,13 +55,16 @@ class LLMExtractor:
     Uses LLM to extract failure mode, effect, cause, and related information from text
     """
 
-    def __init__(self, config: Dict):
-        """
-        Initialize LLM extractor with model configuration
+    # SECURITY: Whitelist of trusted models
+    TRUSTED_MODELS = [
+        "mistralai/Mistral-7B-Instruct-v0.2",
+        "meta-llama/Llama-2-7b-chat-hf",
+        "meta-llama/Llama-2-13b-chat-hf",
+        "google/flan-t5-base",
+        "google/flan-t5-large",
+    ]
 
-        Args:
-            config: Configuration dictionary with model settings
-        """
+    def __init__(self, config: Dict):
         self.config = config
         self.model_config = config.get("model", {})
         self.prompts = config.get("prompts", {})
@@ -73,60 +75,61 @@ class LLMExtractor:
 
         self._load_model()
 
+    # ---------------- SECURITY ---------------- #
+
+    def _validate_model_name(self, model_name: str) -> bool:
+        """Validate model name against whitelist"""
+        return model_name in self.TRUSTED_MODELS
+
+    # ---------------- MODEL LOADING ---------------- #
+
     def _load_model(self):
-        """Load the LLM model and tokenizer"""
-        model_name = self.model_config.get("name", "mistralai/Mistral-7B-Instruct-v0.2")
+        model_name = self.model_config.get(
+            "name", "mistralai/Mistral-7B-Instruct-v0.2"
+        )
+
+        if not self._validate_model_name(model_name):
+            logger.error(f"Model '{model_name}' not trusted. Using rule-based extraction.")
+            self.pipeline = None
+            return
 
         logger.info(f"Loading model: {model_name}")
 
         try:
-            # Configure quantization for memory efficiency
-            quantization_config = None
+            # Quantization
+            quant_config = None
             if self.model_config.get("quantization", True):
-                quantization_config = BitsAndBytesConfig(
+                quant_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_use_double_quant=True,
                 )
 
-            # Load tokenizer
+            # Tokenizer (SECURE)
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=True
+                model_name, trust_remote_code=False
             )
 
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-            # Determine device
-            device_config = self.model_config.get("device", "auto")
+            # Device handling
+            device = self.model_config.get("device", "auto")
+            if device == "auto":
+                device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            # Set device_map and actual device for model loading
-            device_map = None
-            actual_device = device_config
-
-            if device_config == "auto":
-                # Use automatic device mapping for efficient GPU utilization
-                device_map = "auto"
-                actual_device = "cuda" if torch.cuda.is_available() else "cpu"
-            else:
-                # Explicit device set by user (e.g., 'cpu' or 'cuda')
-                actual_device = device_config
-
-            # Load model
+            # Model (SECURE)
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
-                quantization_config=quantization_config,
-                device_map=device_map,
-                trust_remote_code=True,
-                torch_dtype=torch.float16 if actual_device != "cpu" else torch.float32,
+                quantization_config=quant_config,
+                trust_remote_code=False,
+                torch_dtype=torch.float16 if device != "cpu" else torch.float32,
             )
 
-            # Manually move to device only if device_map was not used
-            if device_map is None and actual_device in ["cpu", "cuda"]:
-                self.model = self.model.to(actual_device)
+            self.model = self.model.to(device)
 
-            # Create pipeline
+            # Pipeline
             self.pipeline = pipeline(
                 "text-generation",
                 model=self.model,
@@ -137,14 +140,13 @@ class LLMExtractor:
                 do_sample=True,
             )
 
-            logger.info(
-                f"Model loaded successfully on {actual_device} (device_map: {device_map})"
-            )
+            logger.info(f"Model loaded successfully on {device}")
 
         except Exception as e:
-            logger.error(f"Error loading model: {e}")
-            logger.warning("Falling back to rule-based extraction")
+            logger.error(f"Model loading error: {e}")
             self.pipeline = None
+
+    # ---------------- EXTRACTION ---------------- #
 
     def extract_failure_info(self, text: str) -> Dict[str, str]:
         """
@@ -169,11 +171,10 @@ class LLMExtractor:
             text = text[:MAX_TEXT_LENGTH]
         
         if self.pipeline is None:
-            # Fallback to rule-based extraction
             return self._rule_based_extraction(text)
-        
-        # First attempt with detailed prompt
+
         try:
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
             prompt = self._build_extraction_prompt(text)
             response = self._generate_llm_response_with_timeout(prompt)
             extracted_info = self._parse_llm_response(response)
@@ -242,45 +243,60 @@ Input: "The gas turbine starter has low efficiency and fails to turn the engine 
 Output: {{"failure_mode": "Function failure when not turning the engine on starting", "effect": "Function failure", "cause": "Starter low efficiency", "component": "Gas turbine starter"}}
 
 Now analyze this text:
+=======
+            prompt = self._build_prompt(text)
+            response = self._generate_response(prompt)
+            extracted = self._parse_llm_response(response)
+
+            if self._is_valid(extracted):
+                return self._clean_output(extracted)
+
+            raise ValueError("Invalid extraction")
+
+        except Exception as e:
+            logger.warning(f"Retry extraction due to error: {e}")
+
+        # Retry strict
+        try:
+            prompt = self._strict_prompt(text)
+            response = self._generate_response(prompt)
+            extracted = self._parse_llm_response(response)
+
+            if self._is_valid(extracted):
+                return self._clean_output(extracted)
+
+        except Exception as e:
+            logger.error(f"Retry failed: {e}")
+
+        return self._rule_based_extraction(text)
+
+    # ---------------- PROMPTS ---------------- #
+
+    def _build_prompt(self, text: str) -> str:
+        return f"""
+Extract failure information in JSON.
+
+>>>>>>> main
 Text: {text}
 
-Output:"""
-        return prompt
-    
-    def _build_strict_retry_prompt(self, text: str) -> str:
-        """
-        Build stricter prompt for retry attempt
-        
-        Args:
-            text: Input text to analyze
-            
-        Returns:
-            Strict retry prompt
-        """
-        prompt = f"""Your previous response was not valid JSON. 
+Output:
+"""
 
-Analyze this text and output ONLY a JSON object with these exact keys:
-{{"failure_mode": "what physically fails", "effect": "consequence to user", "cause": "root mechanism", "component": "affected system"}}
+    def _strict_prompt(self, text: str) -> str:
+        return f"""
+Return ONLY JSON with keys:
+failure_mode, effect, cause, component.
 
 Text: {text}
+"""
 
-Response (JSON only):"""
-        return prompt
-    
-    def _generate_llm_response(self, prompt: str) -> str:
-        """
-        Generate LLM response with error handling
-        
-        Args:
-            prompt: Formatted prompt
-            
-        Returns:
-            Generated response text
-        """
+    # ---------------- LLM ---------------- #
+
+    def _generate_response(self, prompt: str) -> str:
         response = self.pipeline(
             prompt,
-            max_new_tokens=self.model_config.get('max_length', 512),
             return_full_text=False,
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
             do_sample=False,  # Use deterministic generation for consistency
             temperature=0.1   # Low temperature for factual extraction
         )[0]['generated_text']
@@ -564,39 +580,37 @@ Response (JSON only):"""
 
         # Extract component
         component = self._extract_with_keywords(text, component_keywords)
+=======
+            do_sample=False,
+            temperature=0.1,
+        )[0]["generated_text"]
+>>>>>>> main
 
-        return {
-            "failure_mode": failure_mode if failure_mode else text[:100],
-            "effect": effect if effect else "Functionality impacted",
-            "cause": cause if cause else "Under investigation",
-            "component": component if component else "General",
-            "existing_controls": "Not specified",
-        }
+        return response.strip()
 
-    def _extract_with_keywords(self, text: str, keywords: List[str]) -> str:
-        """
-        Extract sentence containing keywords
+    # ---------------- VALIDATION ---------------- #
 
-        Args:
-            text: Input text
-            keywords: List of keywords to search for
+    def _is_valid(self, data: Dict) -> bool:
+        keys = ["failure_mode", "effect", "cause", "component"]
+        return all(k in data and data[k] for k in keys)
 
-        Returns:
-            Extracted sentence or empty string
-        """
-        sentences = text.split(".")
-        for sentence in sentences:
-            if any(keyword in sentence.lower() for keyword in keywords):
-                return sentence.strip()
-        return ""
+    def _clean_output(self, data: Dict) -> Dict[str, str]:
+        for k, v in data.items():
+            if not v:
+                data[k] = "Not specified"
 
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
     def batch_extract(self, texts: List[str]) -> List[Dict[str, str]]:
         """
         Extract failure information from multiple texts with size limit
+=======
+        if "existing_controls" not in data:
+            data["existing_controls"] = "Not specified"
+>>>>>>> main
 
-        Args:
-            texts: List of input texts
+        return data
 
+<<<<<<< fix/Uncontrolled_Resource_Consumption_DoS_Vulnerability
         Returns:
             List of extracted information dictionaries
         """
@@ -620,25 +634,42 @@ Response (JSON only):"""
                 results.append(self._rule_based_extraction(text[:1000]))
 
         return results
+=======
+    # ---------------- PARSER ---------------- #
 
+    def _parse_llm_response(self, response: str) -> Dict[str, str]:
+        try:
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+        except:
+            pass
+>>>>>>> main
 
-if __name__ == "__main__":
-    # Example usage
-    import yaml
+        return {
+            "failure_mode": "Unknown",
+            "effect": "Unknown",
+            "cause": "Unknown",
+            "component": "Unknown",
+        }
 
-    with open("../config/config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    # ---------------- RULE BASED ---------------- #
 
-    extractor = LLMExtractor(config)
+    def _rule_based_extraction(self, text: str) -> Dict[str, str]:
+        logger.info("Rule-based extraction fallback")
 
-    # Test extraction
-    sample_text = """
-    The brake system failed completely while driving on the highway at 70 mph.
-    This resulted in a dangerous situation where I couldn't stop the car properly.
-    The failure was caused by worn brake pads that were not detected during
-    the last maintenance check.
-    """
+        return {
+            "failure_mode": text[:80],
+            "effect": "Functionality impacted",
+            "cause": "Under investigation",
+            "component": "General",
+            "existing_controls": "Not specified",
+        }
 
-    result = extractor.extract_failure_info(sample_text)
-    print("\nExtracted Information:")
-    print(json.dumps(result, indent=2))
+    # ---------------- BATCH ---------------- #
+
+    def batch_extract(self, texts: List[str]) -> List[Dict[str, str]]:
+        results = []
+        for t in tqdm(texts):
+            results.append(self.extract_failure_info(t))
+        return results
