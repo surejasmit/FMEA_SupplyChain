@@ -26,6 +26,19 @@ class LLMExtractor:
     """
     Uses LLM to extract failure mode, effect, cause, and related information from text
     """
+    
+    # Security: Whitelist of trusted models that don't require trust_remote_code
+    TRUSTED_MODELS = {
+        "mistralai/Mistral-7B-Instruct-v0.2",
+        "mistralai/Mistral-7B-Instruct-v0.1",
+        "meta-llama/Llama-2-7b-chat-hf",
+        "meta-llama/Llama-2-13b-chat-hf",
+        "google/flan-t5-base",
+        "google/flan-t5-large",
+        "gpt2",
+        "gpt2-medium",
+        "gpt2-large",
+    }
 
     def __init__(self, config: Dict):
         """
@@ -48,7 +61,17 @@ class LLMExtractor:
         """Load the LLM model and tokenizer"""
         model_name = self.model_config.get("name", "mistralai/Mistral-7B-Instruct-v0.2")
 
-        logger.info(f"Loading model: {model_name}")
+        # Security check: Validate model against whitelist
+        if not self._is_trusted_model(model_name):
+            logger.error(
+                f"Security Error: Model '{model_name}' is not in the trusted whitelist. "
+                f"Trusted models: {', '.join(sorted(self.TRUSTED_MODELS))}"
+            )
+            logger.warning("Falling back to rule-based extraction for security")
+            self.pipeline = None
+            return
+
+        logger.info(f"Loading trusted model: {model_name}")
 
         try:
             # Configure quantization for memory efficiency
@@ -61,9 +84,9 @@ class LLMExtractor:
                     bnb_4bit_use_double_quant=True,
                 )
 
-            # Load tokenizer
+            # Load tokenizer (SECURITY: trust_remote_code=False to prevent code execution)
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name, trust_remote_code=True
+                model_name, trust_remote_code=False
             )
 
             if self.tokenizer.pad_token is None:
@@ -84,12 +107,12 @@ class LLMExtractor:
                 # Explicit device set by user (e.g., 'cpu' or 'cuda')
                 actual_device = device_config
 
-            # Load model
+            # Load model (SECURITY: trust_remote_code=False to prevent code execution)
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 quantization_config=quantization_config,
                 device_map=device_map,
-                trust_remote_code=True,
+                trust_remote_code=False,
                 torch_dtype=torch.float16 if actual_device != "cpu" else torch.float32,
             )
 
@@ -116,6 +139,18 @@ class LLMExtractor:
             logger.error(f"Error loading model: {e}")
             logger.warning("Falling back to rule-based extraction")
             self.pipeline = None
+    
+    def _is_trusted_model(self, model_name: str) -> bool:
+        """
+        Security check: Verify if model is in trusted whitelist
+        
+        Args:
+            model_name: Name of the model to validate
+            
+        Returns:
+            True if model is trusted, False otherwise
+        """
+        return model_name in self.TRUSTED_MODELS
 
     def extract_failure_info(self, text: str) -> Dict[str, str]:
         """
