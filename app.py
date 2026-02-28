@@ -31,55 +31,6 @@ from voice_input import VoiceInputProcessor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Resource limits for security
-MAX_FILE_UPLOAD_SIZE_MB = 50
-MAX_TEXT_INPUT_LENGTH = 50000
-MAX_BATCH_PROCESSING = 5000
-
-def validate_file_upload(uploaded_file) -> tuple[bool, str]:
-    """
-    Validate uploaded file size and type
-    
-    Args:
-        uploaded_file: Streamlit uploaded file object
-        
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    if uploaded_file is None:
-        return True, ""
-    
-    # Check file size
-    file_size_mb = uploaded_file.size / (1024 * 1024)
-    if file_size_mb > MAX_FILE_UPLOAD_SIZE_MB:
-        return False, f"File size ({file_size_mb:.1f} MB) exceeds maximum allowed size ({MAX_FILE_UPLOAD_SIZE_MB} MB)"
-    
-    # Check file type
-    allowed_extensions = ['.csv', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.pdf']
-    file_ext = Path(uploaded_file.name).suffix.lower()
-    if file_ext not in allowed_extensions:
-        return False, f"File type {file_ext} not allowed. Allowed types: {', '.join(allowed_extensions)}"
-    
-    return True, ""
-
-def validate_text_input(text: str) -> tuple[bool, str]:
-    """
-    Validate text input length
-    
-    Args:
-        text: Input text string
-        
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    if not text:
-        return True, ""
-    
-    if len(text) > MAX_TEXT_INPUT_LENGTH:
-        return False, f"Text input ({len(text)} characters) exceeds maximum allowed length ({MAX_TEXT_INPUT_LENGTH} characters)"
-    
-    return True, ""
-
 # Currency conversion rate (USD to INR)
 USD_TO_INR_RATE = 83.50
 
@@ -439,13 +390,8 @@ def main():
                 )
                 
                 if uploaded_file:
-                    # Validate file
-                    is_valid, error_msg = validate_file_upload(uploaded_file)
-                    if not is_valid:
-                        st.error(f"❌ {error_msg}")
-                    else:
-                        # Display uploaded image
-                        col1, col2 = st.columns([1, 2])
+                    # Display uploaded image
+                    col1, col2 = st.columns([1, 2])
                     
                     with col1:
                         st.image(uploaded_file, caption="Uploaded Image", use_column_width=True)
@@ -461,46 +407,29 @@ def main():
                                 st.text_area("", extracted_text, height=150, key="extracted", disabled=True)
                                 
                                 if "Error" not in extracted_text and "No text found" not in extracted_text:
-                                    # Validate extracted text length
-                                    is_valid, error_msg = validate_text_input(extracted_text)
-                                    if not is_valid:
-                                        st.error(f"❌ {error_msg}")
-                                    else:
-                                        with st.spinner("Generating FMEA from extracted text..."):
-                                            generator = initialize_generator(config)
-                                            # Split text into lines and limit
-                                            texts = [line.strip() for line in extracted_text.split('\n') if line.strip()]
-                                            if len(texts) > MAX_BATCH_PROCESSING:
-                                                st.warning(f"Processing limited to {MAX_BATCH_PROCESSING} entries")
-                                                texts = texts[:MAX_BATCH_PROCESSING]
-                                            fmea_df = generator.generate_from_text(texts, is_file=False)
-                                            st.session_state['fmea_df'] = fmea_df
-                                            st.session_state['fmea_saved'] = False
+                                    with st.spinner("Generating FMEA from extracted text..."):
+                                        generator = initialize_generator(config)
+                                        # Split text into lines
+                                        texts = [line.strip() for line in extracted_text.split('\n') if line.strip()]
+                                        fmea_df = generator.generate_from_text(texts, is_file=False)
+                                        st.session_state['fmea_df'] = fmea_df
+                                        st.session_state['fmea_saved'] = False
                                 else:
                                     st.error(extracted_text)
             else:
                 text_input = st.text_area(
                     "Enter text (reviews, reports, complaints):",
                     height=200,
-                    max_chars=MAX_TEXT_INPUT_LENGTH,
                     placeholder="Paste customer reviews, failure reports, or complaint text here..."
                 )
                 
                 if text_input and st.button("🚀 Generate FMEA", type="primary"):
-                    # Validate text input
-                    is_valid, error_msg = validate_text_input(text_input)
-                    if not is_valid:
-                        st.error(f"❌ {error_msg}")
-                    else:
-                        with st.spinner("Analyzing text and generating FMEA..."):
-                            generator = initialize_generator(config)
-                            texts = [line.strip() for line in text_input.split('\n') if line.strip()]
-                            if len(texts) > MAX_BATCH_PROCESSING:
-                                st.warning(f"Processing limited to {MAX_BATCH_PROCESSING} entries")
-                                texts = texts[:MAX_BATCH_PROCESSING]
-                            fmea_df = generator.generate_from_text(texts, is_file=False)
-                            st.session_state['fmea_df'] = fmea_df
-                            st.session_state['fmea_saved'] = False
+                    with st.spinner("Analyzing text and generating FMEA..."):
+                        generator = initialize_generator(config)
+                        texts = [line.strip() for line in text_input.split('\n') if line.strip()]
+                        fmea_df = generator.generate_from_text(texts, is_file=False)
+                        st.session_state['fmea_df'] = fmea_df
+                        st.session_state['fmea_saved'] = False
 
         elif input_type == "📷 Scan Document (OCR)":
             st.markdown("**Upload an image or PDF for OCR extraction:**")
@@ -511,14 +440,9 @@ def main():
             )
 
             if uploaded_ocr_file:
-                # Validate file
-                is_valid, error_msg = validate_file_upload(uploaded_ocr_file)
-                if not is_valid:
-                    st.error(f"❌ {error_msg}")
-                else:
-                    file_bytes = uploaded_ocr_file.getvalue()
-                    file_name = uploaded_ocr_file.name.lower()
-                    file_key = f"ocr_{uploaded_ocr_file.name}_{len(file_bytes)}_{uploaded_ocr_file.type}"
+                file_bytes = uploaded_ocr_file.getvalue()
+                file_name = uploaded_ocr_file.name.lower()
+                file_key = f"ocr_{uploaded_ocr_file.name}_{len(file_bytes)}_{uploaded_ocr_file.type}"
 
                 if st.session_state.get('ocr_source_key') != file_key:
                     with st.spinner("Extracting text from document..."):
@@ -561,20 +485,12 @@ def main():
                     if not edited_text:
                         st.warning("Please review or add text before generating FMEA.")
                     else:
-                        # Validate text length
-                        is_valid, error_msg = validate_text_input(edited_text)
-                        if not is_valid:
-                            st.error(f"❌ {error_msg}")
-                        else:
-                            with st.spinner("Generating FMEA from OCR text..."):
-                                generator = initialize_generator(config)
-                                texts = [line.strip() for line in edited_text.split('\n') if line.strip()]
-                                if len(texts) > MAX_BATCH_PROCESSING:
-                                    st.warning(f"Processing limited to {MAX_BATCH_PROCESSING} entries")
-                                    texts = texts[:MAX_BATCH_PROCESSING]
-                                fmea_df = generator.generate_from_text(texts, is_file=False)
-                                st.session_state['fmea_df'] = fmea_df
-                                st.session_state['fmea_saved'] = False
+                        with st.spinner("Generating FMEA from OCR text..."):
+                            generator = initialize_generator(config)
+                            texts = [line.strip() for line in edited_text.split('\n') if line.strip()]
+                            fmea_df = generator.generate_from_text(texts, is_file=False)
+                            st.session_state['fmea_df'] = fmea_df
+                            st.session_state['fmea_saved'] = False
         
         elif input_type == "🎙️ Voice Input":
             st.markdown("**🎙️ Record your failure description:**")
@@ -634,26 +550,18 @@ def main():
             )
             
             if uploaded_file:
-                # Validate file
-                is_valid, error_msg = validate_file_upload(uploaded_file)
-                if not is_valid:
-                    st.error(f"❌ {error_msg}")
-                else:
-                    temp_path = Path(f"temp_{uploaded_file.name}")
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
+                temp_path = Path(f"temp_{uploaded_file.name}")
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
                 
                 if st.button("🚀 Generate FMEA", type="primary"):
                     with st.spinner("Processing structured data..."):
-                        try:
-                            generator = initialize_generator(config)
-                            fmea_df = generator.generate_from_structured(str(temp_path))
-                            st.session_state['fmea_df'] = fmea_df
-                            st.session_state['fmea_saved'] = False
-                        except ValueError as e:
-                            st.error(f"❌ {str(e)}")
-                        finally:
-                            temp_path.unlink(missing_ok=True)
+                        generator = initialize_generator(config)
+                        fmea_df = generator.generate_from_structured(str(temp_path))
+                        st.session_state['fmea_df'] = fmea_df
+                        st.session_state['fmea_saved'] = False
+                    
+                    temp_path.unlink()
         
         else:  # Hybrid
             st.markdown("**Upload both structured and unstructured data:**")
@@ -667,71 +575,75 @@ def main():
                     type=['csv', 'xlsx', 'xls'],
                     key='structured'
                 )
-                if structured_file:
-                    is_valid, error_msg = validate_file_upload(structured_file)
-                    if not is_valid:
-                        st.error(f"❌ {error_msg}")
             
             with col2:
                 st.markdown("**Unstructured Data:**")
                 unstructured_text = st.text_area(
                     "Enter text manually (reviews, reports, complaints):",
                     height=200,
-                    max_chars=MAX_TEXT_INPUT_LENGTH,
                     placeholder="Paste customer reviews, failure reports, or complaint text here...",
                     key='hybrid_text'
                 )
-                if unstructured_text:
-                    is_valid, error_msg = validate_text_input(unstructured_text)
-                    if not is_valid:
-                        st.error(f"❌ {error_msg}")
             
-            if (structured_file or unstructured_text) and st.button("🚀 Generate Hybrid FMEA", type="primary"):
-                # Validate inputs
-                valid = True
+            generate_hybrid_btn = st.button("🚀 Generate Hybrid FMEA", type="primary")
+            if generate_hybrid_btn:
+                # Validate that at least one valid input is provided
+                has_valid_file = False
+                has_valid_text = False
+
                 if structured_file:
-                    is_valid, error_msg = validate_file_upload(structured_file)
-                    if not is_valid:
-                        st.error(f"❌ Structured file: {error_msg}")
-                        valid = False
-                if unstructured_text:
-                    is_valid, error_msg = validate_text_input(unstructured_text)
-                    if not is_valid:
-                        st.error(f"❌ Text input: {error_msg}")
-                        valid = False
+                    try:
+                        file_ext = structured_file.name.split('.')[-1].lower()
+                        if file_ext == 'csv':
+                            check_df = pd.read_csv(structured_file)
+                        else:
+                            check_df = pd.read_excel(structured_file)
+                        structured_file.seek(0)
+                        
+                        if check_df.empty or len(check_df) == 0:
+                            st.error("⚠️ The uploaded structured file contains no data rows.")
+                            st.stop()
+                        has_valid_file = True
+                    except Exception as e:
+                        st.error(f"⚠️ Unable to read the structured file. Error: {e}")
+                        st.stop()
                 
-                if valid:
-                    with st.spinner("Processing hybrid data..."):
-                        try:
-                            generator = initialize_generator(config)
-                            
-                            structured_path = None
-                            text_data = None
-                            
-                            if structured_file:
-                                structured_path = Path(f"temp_structured_{structured_file.name}")
-                                with open(structured_path, "wb") as f:
-                                    f.write(structured_file.getbuffer())
-                            
-                            if unstructured_text:
-                                # Convert text to list of lines with limit
-                                text_data = [line.strip() for line in unstructured_text.split('\n') if line.strip()]
-                                if len(text_data) > MAX_BATCH_PROCESSING:
-                                    st.warning(f"Text processing limited to {MAX_BATCH_PROCESSING} entries")
-                                    text_data = text_data[:MAX_BATCH_PROCESSING]
-                            
-                            fmea_df = generator.generate_hybrid(
-                                structured_file=str(structured_path) if structured_path else None,
-                                text_input=text_data if text_data else None
-                            )
-                            st.session_state['fmea_df'] = fmea_df
-                            st.session_state['fmea_saved'] = False
-                            
-                            # Cleanup
-                            if structured_path:
-                                structured_path.unlink(missing_ok=True)
-                        except ValueError as e:
-                            st.error(f"❌ {str(e)}")
+                if unstructured_text and unstructured_text.strip():
+                    has_valid_text = True
+                
+                if not has_valid_file and not has_valid_text:
+                    st.error("⚠️ Please provide at least one input: upload a structured file OR enter text manually.")
+                    st.stop()
+
+                with st.spinner("Processing hybrid data..."):
+                    try:
+                        generator = initialize_generator(config)
+                        
+                        structured_path = None
+                        text_data = None
+                        
+                        if has_valid_file:
+                            structured_path = Path(f"temp_structured_{structured_file.name}")
+                            with open(structured_path, "wb") as f:
+                                f.write(structured_file.getbuffer())
+                        
+                        if has_valid_text:
+                            text_data = [line.strip() for line in unstructured_text.split('\n') if line.strip()]
+                        
+                        fmea_df = generator.generate_hybrid(
+                            structured_file=str(structured_path) if structured_path else None,
+                            text_input=text_data if text_data else None
+                        )
+                        st.session_state['fmea_df'] = fmea_df
+                        st.session_state['fmea_saved'] = False
+                        
+                        # Cleanup
+                        if structured_path:
+                            structured_path.unlink(missing_ok=True)
+                    except ValueError as e:
+                        st.error(f"❌ {str(e)}")
+                    except Exception as e:
+                        st.error(f"❌ Error processing hybrid data: {str(e)}")
         
         # Display results
         if 'fmea_df' in st.session_state:
