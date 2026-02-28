@@ -95,11 +95,20 @@ st.markdown("""
 
 @st.cache_resource
 def load_config():
-    """Load configuration from YAML file"""
+    """Load configuration from YAML file with validation"""
     config_path = Path('config/config.yaml')
     if config_path.exists():
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+        try:
+            from config_validator import load_config_safe
+            return load_config_safe(str(config_path))
+        except ValueError as e:
+            st.error(f"Invalid configuration: {e}")
+            logger.error(f"Config validation failed: {e}")
+            return {}
+        except Exception as e:
+            st.error(f"Error loading configuration: {e}")
+            logger.error(f"Config load error: {e}")
+            return {}
     else:
         st.error("Configuration file not found!")
         return {}
