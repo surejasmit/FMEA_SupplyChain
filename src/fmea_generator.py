@@ -3,6 +3,7 @@ FMEA Generator Module
 Orchestrates the complete FMEA generation pipeline
 """
 
+import copy
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Union, Any
@@ -74,38 +75,30 @@ class FMEAGenerator:
         
         texts = preprocessed_df['text_cleaned'].tolist()
         
-        # Step 2: Generate FMEA for each model
+        # Step 2: Generate FMEA for each model using isolated config copies
         individual_results = {}
-        original_model = self.config['model']['name']
         
-        try:
-            import copy
-            for model_name in model_names:
-                logger.info(f"Generating FMEA for model: {model_name}")
-                # Deep copy config for thread safety
-                model_config = copy.deepcopy(self.config)
-                model_config['model']['name'] = model_name
-                # Create new extractor with deep-copied config
-                temp_extractor = LLMExtractor(model_config)
-                # Extract failure information using this model
-                extracted_info = temp_extractor.batch_extract(texts)
-                extracted_df = pd.DataFrame(extracted_info)
-                # Add original text for reference
-                extracted_df['original_text'] = preprocessed_df['text'].values
-                extracted_df['sentiment'] = preprocessed_df['sentiment'].values
-                # Calculate risk scores
-                fmea_df = self.scorer.batch_score(extracted_df)
-                # Generate recommendations
-                fmea_df = self._generate_recommendations(fmea_df)
-                # Format output
-                fmea_df = self._format_output(fmea_df)
-                individual_results[model_name] = fmea_df
-                logger.info(f"Generated FMEA for {model_name} with {len(fmea_df)} entries")
-        
-        finally:
-            # Restore original model
-            self.config['model']['name'] = original_model
-            self.extractor = LLMExtractor(self.config)
+        for model_name in model_names:
+            logger.info(f"Generating FMEA for model: {model_name}")
+            # Deep copy config to avoid shared-state mutation (thread-safety)
+            model_config = copy.deepcopy(self.config)
+            model_config['model']['name'] = model_name
+            # Create new extractor with its own isolated config
+            temp_extractor = LLMExtractor(model_config)
+            # Extract failure information using this model
+            extracted_info = temp_extractor.batch_extract(texts)
+            extracted_df = pd.DataFrame(extracted_info)
+            # Add original text for reference
+            extracted_df['original_text'] = preprocessed_df['text'].values
+            extracted_df['sentiment'] = preprocessed_df['sentiment'].values
+            # Calculate risk scores
+            fmea_df = self.scorer.batch_score(extracted_df)
+            # Generate recommendations
+            fmea_df = self._generate_recommendations(fmea_df)
+            # Format output
+            fmea_df = self._format_output(fmea_df)
+            individual_results[model_name] = fmea_df
+            logger.info(f"Generated FMEA for {model_name} with {len(fmea_df)} entries")
         
         # Step 3: Compare results from all models
         comparator = MultiModelComparator(self.config)
@@ -144,43 +137,33 @@ class FMEAGenerator:
                         for col in ['severity', 'occurrence', 'detection'])
         
         individual_results = {}
-        original_model = self.config['model']['name']
         
-        try:
-            import copy
-            for model_name in model_names:
-                logger.info(f"Processing structured data for model: {model_name}")
-                # Deep copy config for thread safety
-                model_config = copy.deepcopy(self.config)
-                model_config['model']['name'] = model_name
-                fmea_df = structured_df.copy()
-                if not has_scores:
-                    # For comparison, we use the same scorer for all models
-                    # The difference would come from different extracted failure modes
-                    fmea_df = self.scorer.batch_score(fmea_df)
-                else:
-                    # Recalculate RPN with updated config settings
-                    fmea_df['rpn'] = fmea_df.apply(
-                        lambda row: self.scorer.calculate_rpn(
-                            row['severity'], row['occurrence'], row['detection']
-                        ), axis=1
-                    )
-                    fmea_df['action_priority'] = fmea_df.apply(
-                        lambda row: self.scorer.calculate_action_priority(
-                            row['severity'], row['occurrence'], row['detection']
-                        ), axis=1
-                    )
-                # Generate recommendations
-                fmea_df = self._generate_recommendations(fmea_df)
-                # Format output
-                fmea_df = self._format_output(fmea_df)
-                individual_results[model_name] = fmea_df
-                logger.info(f"Processed structured data for {model_name} with {len(fmea_df)} entries")
-        
-        finally:
-            # Restore original model
-            self.config['model']['name'] = original_model
-            self.extractor = LLMExtractor(self.config)
+        for model_name in model_names:
+            logger.info(f"Processing structured data for model: {model_name}")
+            # Deep copy config to avoid shared-state mutation (thread-safety)
+            model_config = copy.deepcopy(self.config)
+            model_config['model']['name'] = model_name
+            fmea_df = structured_df.copy()
+            if not has_scores:
+                fmea_df = self.scorer.batch_score(fmea_df)
+            else:
+                # Recalculate RPN with isolated config settings
+                fmea_df['rpn'] = fmea_df.apply(
+                    lambda row: self.scorer.calculate_rpn(
+                        row['severity'], row['occurrence'], row['detection']
+                    ), axis=1
+                )
+                fmea_df['action_priority'] = fmea_df.apply(
+                    lambda row: self.scorer.calculate_action_priority(
+                        row['severity'], row['occurrence'], row['detection']
+                    ), axis=1
+                )
+            # Generate recommendations
+            fmea_df = self._generate_recommendations(fmea_df)
+            # Format output
+            fmea_df = self._format_output(fmea_df)
+            individual_results[model_name] = fmea_df
+            logger.info(f"Processed structured data for {model_name} with {len(fmea_df)} entries")
         
         # Compare results from all models
         comparator = MultiModelComparator(self.config)
@@ -192,6 +175,166 @@ class FMEAGenerator:
             'individual_results': individual_results,
             'comparison_results': comparison_results
         }
+
+    # ================================================================
+    # Benchmarking Ensemble Methods
+    # ================================================================
+
+    def generate_benchmark_comparison(self,
+                                      text_input: Union[str, List[str]],
+                                      is_file: bool = False,
+                                      use_temperature_sweep: bool = False
+                                      ) -> Dict[str, Any]:
+        """
+        Run the full benchmarking pipeline using models from config['benchmarking'].
+
+        Args:
+            text_input: File path or text list
+            is_file: Whether text_input is a file path
+            use_temperature_sweep: If True, use temperature variation instead of
+                                   multiple models (for mock testing)
+
+        Returns:
+            Dictionary with:
+            {
+                'individual_results': Dict[model_id -> FMEA DataFrame],
+                'comparison_results': MultiModelComparator output,
+                'benchmark_analytics': variance / consensus / flagged items
+            }
+        """
+        from analytics import (
+            calculate_fmea_variance,
+            calculate_consensus_scores,
+            calculate_average_agreement,
+            flag_for_expert_review,
+            identify_field_level_disagreements,
+            normalize_model_results,
+        )
+
+        logger.info("Starting benchmark comparison pipeline...")
+
+        benchmarking_cfg = self.config.get('benchmarking', {})
+        variance_threshold = benchmarking_cfg.get('variance_threshold', 2.5)
+        agreement_threshold = benchmarking_cfg.get('agreement_threshold', 0.8)
+
+        # Step 1: Preprocess
+        if is_file:
+            preprocessed_df = self.preprocessor.load_unstructured_data(file_path=text_input)
+        else:
+            preprocessed_df = self.preprocessor.load_unstructured_data(text_data=text_input)
+
+        texts = preprocessed_df['text_cleaned'].tolist()
+
+        # Step 2: Fan-out extraction
+        if use_temperature_sweep:
+            sweep_results = self.extractor.run_temperature_sweep_extraction(
+                texts[0] if len(texts) == 1 else ". ".join(texts))
+            model_ids = list(sweep_results.keys())
+        else:
+            active_models = benchmarking_cfg.get('active_models', [])
+            model_ids = [m.get('id', m.get('name', 'unknown')) for m in active_models]
+
+        # Step 3: Generate FMEA per model
+        individual_results: Dict[str, pd.DataFrame] = {}
+
+        if use_temperature_sweep:
+            for model_id in model_ids:
+                # For temp sweep, use the default extractor with varied output
+                extracted_info = self.extractor.batch_extract(texts)
+                extracted_df = pd.DataFrame(extracted_info)
+                extracted_df['original_text'] = preprocessed_df['text'].values[:len(extracted_df)]
+                extracted_df['sentiment'] = preprocessed_df['sentiment'].values[:len(extracted_df)]
+                fmea_df = self.scorer.batch_score(extracted_df)
+                fmea_df = self._generate_recommendations(fmea_df)
+                fmea_df = self._format_output(fmea_df)
+                individual_results[model_id] = fmea_df
+        else:
+            for model_cfg in benchmarking_cfg.get('active_models', []):
+                model_id = model_cfg.get('id', 'unknown')
+                model_path = model_cfg.get('model_path', model_cfg.get('name', ''))
+                model_type = model_cfg.get('type', 'local')
+
+                logger.info(f"Benchmark: processing model {model_id} ({model_path})")
+
+                model_config = copy.deepcopy(self.config)
+                model_config['model']['name'] = model_path
+
+                if model_type == 'rule' or model_path == 'Rule-based (No LLM)':
+                    temp_extractor = LLMExtractor(model_config)
+                    extracted_info = [temp_extractor._rule_based_extraction(t) for t in texts]
+                else:
+                    temp_extractor = LLMExtractor(model_config)
+                    extracted_info = temp_extractor.batch_extract(texts)
+
+                extracted_df = pd.DataFrame(extracted_info)
+                extracted_df['original_text'] = preprocessed_df['text'].values[:len(extracted_df)]
+                extracted_df['sentiment'] = preprocessed_df['sentiment'].values[:len(extracted_df)]
+                fmea_df = self.scorer.batch_score(extracted_df)
+                fmea_df = self._generate_recommendations(fmea_df)
+                fmea_df = self._format_output(fmea_df)
+                individual_results[model_id] = fmea_df
+
+        # Step 4: Normalize scores to 1-10 scales
+        individual_results = normalize_model_results(individual_results)
+
+        # Step 5: Multi-model comparison
+        comparator = MultiModelComparator(self.config)
+        comparison_results = comparator.compare_models(individual_results)
+
+        # Step 6: Benchmark analytics
+        variance_df = calculate_fmea_variance(individual_results)
+        consensus_df = calculate_consensus_scores(individual_results)
+        agreement_summary = calculate_average_agreement(individual_results, agreement_threshold)
+        flagged_df = flag_for_expert_review(variance_df, variance_threshold)
+        field_disagreements = identify_field_level_disagreements(individual_results)
+
+        benchmark_analytics = {
+            'variance_df': variance_df,
+            'consensus_df': consensus_df,
+            'agreement_summary': agreement_summary,
+            'flagged_df': flagged_df,
+            'field_disagreements': field_disagreements,
+        }
+
+        logger.info(f"Benchmark complete — avg confidence: {agreement_summary['average_confidence']:.2f}")
+
+        return {
+            'individual_results': individual_results,
+            'comparison_results': comparison_results,
+            'benchmark_analytics': benchmark_analytics,
+        }
+
+    def generate_comparison_report(self, benchmark_result: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Merge individual model FMEA tables into a single report with an
+        'AI Confidence' column derived from consensus scoring.
+
+        Args:
+            benchmark_result: output from generate_benchmark_comparison
+
+        Returns:
+            Combined DataFrame with AI Confidence column
+        """
+        from analytics import calculate_consensus_scores
+
+        individual_results = benchmark_result.get('individual_results', {})
+        if not individual_results:
+            return pd.DataFrame()
+
+        # Use first model's FMEA as the base report
+        base_model = list(individual_results.keys())[0]
+        report_df = individual_results[base_model].copy()
+
+        # Attach confidence
+        consensus_df = calculate_consensus_scores(individual_results)
+        if not consensus_df.empty:
+            conf_map = dict(zip(consensus_df['failure_mode'], consensus_df['confidence_label']))
+            fm_col = 'Failure Mode' if 'Failure Mode' in report_df.columns else 'failure_mode'
+            report_df['AI Confidence'] = report_df[fm_col].map(conf_map).fillna('Unknown')
+        else:
+            report_df['AI Confidence'] = 'N/A'
+
+        return report_df
 
     
     def generate_from_text(self, text_input: Union[str, List[str]], 

@@ -530,6 +530,150 @@ Response (JSON only):"""
         return results
 
 
+    # ================================================================
+    # Benchmarking / Ensemble Methods
+    # ================================================================
+
+    def run_benchmark_extraction(self, text: str) -> Dict[str, Dict[str, str]]:
+        """
+        Run extraction using every model registered in config['benchmarking'].
+        Each result is tagged with the model id.
+
+        Args:
+            text: Input text to analyze
+
+        Returns:
+            Dict mapping model_id -> extracted_info dict
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        benchmarking_cfg = self.config.get('benchmarking', {})
+        active_models = benchmarking_cfg.get('active_models', [])
+
+        if not active_models:
+            logger.warning("No active_models in benchmarking config; using current model only.")
+            return {"default": self.extract_failure_info(text)}
+
+        results: Dict[str, Dict[str, str]] = {}
+
+        def _run_single_model(model_cfg: Dict) -> tuple:
+            """Run extraction for a single model configuration."""
+            model_id = model_cfg.get('id', 'unknown')
+            model_path = model_cfg.get('model_path', model_cfg.get('name', ''))
+            model_type = model_cfg.get('type', 'local')
+
+            try:
+                if model_type == 'rule' or model_path == 'Rule-based (No LLM)':
+                    extracted = self._rule_based_extraction(text)
+                else:
+                    import copy
+                    isolated_config = copy.deepcopy(self.config)
+                    isolated_config['model']['name'] = model_path
+                    temp_extractor = LLMExtractor(isolated_config)
+                    extracted = temp_extractor.extract_failure_info(text)
+                return (model_id, extracted)
+            except Exception as exc:
+                logger.error(f"Benchmark extraction failed for {model_id}: {exc}")
+                return (model_id, self._rule_based_extraction(text))
+
+        # Parallelise across models using ThreadPoolExecutor
+        max_workers = min(len(active_models), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_run_single_model, cfg): cfg for cfg in active_models}
+            for future in as_completed(futures):
+                model_id, extracted = future.result()
+                results[model_id] = extracted
+
+        return results
+
+    def run_temperature_sweep_extraction(self, text: str,
+                                          temperatures: Optional[List[float]] = None
+                                          ) -> Dict[str, Dict[str, str]]:
+        """
+        Simulate multi-model output using a single model at different temperatures.
+        Useful for testing variance analysis before integrating real different models.
+
+        Args:
+            text: Input text
+            temperatures: List of temperature values (defaults from config)
+
+        Returns:
+            Dict mapping 'temp_<value>' -> extracted_info
+        """
+        if temperatures is None:
+            sweep_cfg = self.config.get('benchmarking', {}).get('temperature_sweep', {})
+            temperatures = sweep_cfg.get('temperatures', [0.1, 0.5, 0.8])
+
+        results: Dict[str, Dict[str, str]] = {}
+
+        if self.pipeline is None:
+            for temp in temperatures:
+                results[f"temp_{temp}"] = self._rule_based_extraction(text)
+            return results
+
+        for temp in temperatures:
+            try:
+                prompt = self._build_extraction_prompt(text)
+                response = self.pipeline(
+                    prompt,
+                    max_new_tokens=self.model_config.get('max_length', 512),
+                    return_full_text=False,
+                    do_sample=True,
+                    temperature=temp,
+                    top_p=0.9,
+                )[0]['generated_text'].strip()
+
+                extracted = self._parse_llm_response(response)
+                if self._is_valid_extraction(extracted):
+                    results[f"temp_{temp}"] = self._validate_extraction(extracted)
+                else:
+                    results[f"temp_{temp}"] = self._rule_based_extraction(text)
+            except Exception as exc:
+                logger.warning(f"Temperature sweep ({temp}) failed: {exc}")
+                results[f"temp_{temp}"] = self._rule_based_extraction(text)
+
+        return results
+
+    def batch_benchmark_extract(self, texts: List[str]) -> Dict[str, List[Dict[str, str]]]:
+        """
+        Batch extraction across all benchmark models for multiple texts.
+
+        Args:
+            texts: List of input texts
+
+        Returns:
+            Dict mapping model_id -> list of extracted info dicts
+        """
+        benchmarking_cfg = self.config.get('benchmarking', {})
+        active_models = benchmarking_cfg.get('active_models', [])
+
+        if not active_models:
+            return {"default": self.batch_extract(texts)}
+
+        results: Dict[str, List[Dict[str, str]]] = {}
+
+        for model_cfg in active_models:
+            model_id = model_cfg.get('id', 'unknown')
+            model_path = model_cfg.get('model_path', model_cfg.get('name', ''))
+            model_type = model_cfg.get('type', 'local')
+
+            try:
+                if model_type == 'rule' or model_path == 'Rule-based (No LLM)':
+                    extracted_list = [self._rule_based_extraction(t) for t in texts]
+                else:
+                    import copy
+                    isolated_config = copy.deepcopy(self.config)
+                    isolated_config['model']['name'] = model_path
+                    temp_extractor = LLMExtractor(isolated_config)
+                    extracted_list = temp_extractor.batch_extract(texts)
+                results[model_id] = extracted_list
+            except Exception as exc:
+                logger.error(f"Batch benchmark failed for {model_id}: {exc}")
+                results[model_id] = [self._rule_based_extraction(t) for t in texts]
+
+        return results
+
+
 if __name__ == "__main__":
     # Example usage
     import yaml

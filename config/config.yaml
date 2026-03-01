@@ -138,7 +138,39 @@ model_comparison:
     - "mistralai/Mistral-7B-Instruct-v0.2"
     - "meta-llama/Llama-2-7b-chat-hf"
     - "gpt2"
+    - "google/flan-t5-large"
     - "Rule-based (No LLM)"
+# Benchmarking Registry (Ensemble Evaluator)
+benchmarking:
+  enabled: true
+  active_models:
+    - id: "mistral_7b"
+      name: "Mistral 7B v0.2"
+      model_path: "mistralai/Mistral-7B-Instruct-v0.2"
+      type: "local"
+      weight: 1.0
+    - id: "llama_3"
+      name: "Llama 3 8B"
+      model_path: "meta-llama/Llama-2-7b-chat-hf"
+      type: "local"
+      weight: 1.0
+    - id: "gpt2_baseline"
+      name: "GPT-2 Baseline"
+      model_path: "gpt2"
+      type: "local"
+      weight: 0.8
+    - id: "rule_engine"
+      name: "Rule-Based Engine"
+      model_path: "Rule-based (No LLM)"
+      type: "rule"
+      weight: 0.5
+  metrics: ["Severity", "Occurrence", "Detection"]
+  agreement_threshold: 0.8   # Alert if models disagree by >20%
+  variance_threshold: 2.5    # Flag for human review if StdDev > 2.5
+  temperature_sweep:         # Mock benchmarking via temperature variation
+    enabled: false
+    temperatures: [0.1, 0.5, 0.8]
+
 # Voice Input Settings
 voice_input:
   enabled: true
