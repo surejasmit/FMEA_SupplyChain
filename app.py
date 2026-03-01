@@ -31,6 +31,11 @@ from voice_input import VoiceInputProcessor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Resource limits to prevent DoS attacks
+MAX_FILE_UPLOAD_SIZE_MB = 50
+MAX_TEXT_INPUT_LENGTH = 50000
+MAX_BATCH_PROCESSING = 5000
+
 # Currency conversion rate (USD to INR)
 USD_TO_INR_RATE = 83.50
 
@@ -56,6 +61,32 @@ def format_currency(amount, currency='USD'):
 def get_currency_symbol(currency='USD'):
     """Get currency symbol."""
     return "₹" if currency == 'INR' else "$"
+
+def validate_file_upload(uploaded_file) -> tuple:
+    """Validate file upload size and type"""
+    if uploaded_file is None:
+        return False, "No file uploaded"
+    
+    file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+    if file_size_mb > MAX_FILE_UPLOAD_SIZE_MB:
+        return False, f"File size ({file_size_mb:.1f} MB) exceeds maximum allowed size ({MAX_FILE_UPLOAD_SIZE_MB} MB)"
+    
+    allowed_extensions = ['.csv', '.xlsx', '.xls', '.png', '.jpg', '.jpeg', '.pdf']
+    file_ext = '.' + uploaded_file.name.split('.')[-1].lower()
+    if file_ext not in allowed_extensions:
+        return False, f"File type {file_ext} not allowed. Allowed: {', '.join(allowed_extensions)}"
+    
+    return True, "Valid"
+
+def validate_text_input(text: str) -> tuple:
+    """Validate text input length"""
+    if not text or not text.strip():
+        return False, "Text input is empty"
+    
+    if len(text) > MAX_TEXT_INPUT_LENGTH:
+        return False, f"Text length ({len(text)} chars) exceeds maximum allowed ({MAX_TEXT_INPUT_LENGTH} chars)"
+    
+    return True, "Valid"
 
 # Page configuration
 st.set_page_config(
@@ -95,11 +126,16 @@ st.markdown("""
 
 @st.cache_resource
 def load_config():
-    """Load configuration from YAML file"""
+    """Load configuration from YAML file with security validation"""
+    from config_validator import load_config_safe
+    
     config_path = Path('config/config.yaml')
     if config_path.exists():
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
+        try:
+            return load_config_safe(str(config_path))
+        except ValueError as e:
+            st.error(f"Configuration validation failed: {e}")
+            return {}
     else:
         st.error("Configuration file not found!")
         return {}
