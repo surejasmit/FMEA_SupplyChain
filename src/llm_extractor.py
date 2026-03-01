@@ -23,6 +23,11 @@ from functools import wraps
 
 logger = logging.getLogger(__name__)
 
+# Resource limits to prevent DoS attacks
+MAX_BATCH_SIZE = 1000
+MAX_TEXT_LENGTH = 10000
+LLM_TIMEOUT_SECONDS = 30
+
 
 class LLMExtractor:
     """
@@ -171,6 +176,11 @@ class LLMExtractor:
                 'existing_controls': str
             }
         """
+        # Enforce text length limit
+        if len(text) > MAX_TEXT_LENGTH:
+            logger.warning(f"Text truncated from {len(text)} to {MAX_TEXT_LENGTH} characters")
+            text = text[:MAX_TEXT_LENGTH]
+        
         if self.pipeline is None:
             # Fallback to rule-based extraction
             return self._rule_based_extraction(text)
@@ -616,7 +626,7 @@ Response (JSON only):"""
 
     def batch_extract(self, texts: List[str]) -> List[Dict[str, str]]:
         """
-        Extract failure information from multiple texts
+        Extract failure information from multiple texts with size limit
 
         Args:
             texts: List of input texts
@@ -624,14 +634,24 @@ Response (JSON only):"""
         Returns:
             List of extracted information dictionaries
         """
+        # Enforce batch size limit
+        if len(texts) > MAX_BATCH_SIZE:
+            logger.warning(f"Batch size {len(texts)} exceeds limit {MAX_BATCH_SIZE}. Truncating.")
+            texts = texts[:MAX_BATCH_SIZE]
+        
         logger.info(f"Batch extracting from {len(texts)} texts")
 
         results = []
 
         # Use tqdm for progress bar
         for text in tqdm(texts, desc="Extracting FMEA information", unit="text"):
-            extracted = self.extract_failure_info(text)
-            results.append(extracted)
+            try:
+                extracted = self.extract_failure_info(text)
+                results.append(extracted)
+            except Exception as e:
+                logger.error(f"Failed to extract from text: {e}")
+                # Add fallback result to maintain list consistency
+                results.append(self._rule_based_extraction(text[:1000]))
 
         return results
 
