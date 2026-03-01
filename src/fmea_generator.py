@@ -132,9 +132,19 @@ class FMEAGenerator:
         # Load and validate structured data (shared across all models)
         structured_df = self.preprocessor.load_structured_data(file_path)
         
-        # Check if risk scores already exist
-        has_scores = all(col in structured_df.columns 
-                        for col in ['severity', 'occurrence', 'detection'])
+        # Synthesise text descriptions from structured columns so each model
+        # can independently extract / re-interpret the data.
+        texts = []
+        for _, row in structured_df.iterrows():
+            parts = []
+            if 'component' in row.index and str(row.get('component', '')) not in ('', 'Not specified'):
+                parts.append(f"Component: {row['component']}")
+            parts.append(f"Failure mode: {row.get('failure_mode', 'Unknown')}")
+            parts.append(f"Effect: {row.get('effect', 'Unknown')}")
+            parts.append(f"Cause: {row.get('cause', 'Unknown')}")
+            if 'existing_controls' in row.index and str(row.get('existing_controls', '')) not in ('', 'Not specified'):
+                parts.append(f"Controls: {row['existing_controls']}")
+            texts.append(". ".join(parts))
         
         individual_results = {}
         
@@ -143,21 +153,13 @@ class FMEAGenerator:
             # Deep copy config to avoid shared-state mutation (thread-safety)
             model_config = copy.deepcopy(self.config)
             model_config['model']['name'] = model_name
-            fmea_df = structured_df.copy()
-            if not has_scores:
-                fmea_df = self.scorer.batch_score(fmea_df)
-            else:
-                # Recalculate RPN with isolated config settings
-                fmea_df['rpn'] = fmea_df.apply(
-                    lambda row: self.scorer.calculate_rpn(
-                        row['severity'], row['occurrence'], row['detection']
-                    ), axis=1
-                )
-                fmea_df['action_priority'] = fmea_df.apply(
-                    lambda row: self.scorer.calculate_action_priority(
-                        row['severity'], row['occurrence'], row['detection']
-                    ), axis=1
-                )
+            # Create model-specific extractor (mirrors generate_multi_model_comparison)
+            temp_extractor = LLMExtractor(model_config)
+            # Each model extracts failure info independently
+            extracted_info = temp_extractor.batch_extract(texts)
+            extracted_df = pd.DataFrame(extracted_info)
+            # Calculate risk scores on model-specific extraction
+            fmea_df = self.scorer.batch_score(extracted_df)
             # Generate recommendations
             fmea_df = self._generate_recommendations(fmea_df)
             # Format output
@@ -239,8 +241,8 @@ class FMEAGenerator:
 
         if use_temperature_sweep:
             for model_id in model_ids:
-                # For temp sweep, use the default extractor with varied output
-                extracted_info = self.extractor.batch_extract(texts)
+                # For temp sweep, use the pre-computed sweep result for this temperature
+                extracted_info = [sweep_results[model_id]]
                 extracted_df = pd.DataFrame(extracted_info)
                 extracted_df['original_text'] = preprocessed_df['text'].values[:len(extracted_df)]
                 extracted_df['sentiment'] = preprocessed_df['sentiment'].values[:len(extracted_df)]
