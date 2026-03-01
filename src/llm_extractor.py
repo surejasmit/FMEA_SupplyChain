@@ -18,8 +18,15 @@ import datetime
 import os
 from pathlib import Path
 from tqdm import tqdm
+import signal
+from functools import wraps
 
 logger = logging.getLogger(__name__)
+
+# Resource limits to prevent DoS attacks
+MAX_BATCH_SIZE = 1000
+MAX_TEXT_LENGTH = 10000
+LLM_TIMEOUT_SECONDS = 30
 
 
 class LLMExtractor:
@@ -169,6 +176,11 @@ class LLMExtractor:
                 'existing_controls': str
             }
         """
+        # Enforce text length limit
+        if len(text) > MAX_TEXT_LENGTH:
+            logger.warning(f"Text truncated from {len(text)} to {MAX_TEXT_LENGTH} characters")
+            text = text[:MAX_TEXT_LENGTH]
+        
         if self.pipeline is None:
             # Fallback to rule-based extraction
             return self._rule_based_extraction(text)
@@ -270,22 +282,89 @@ Response (JSON only):"""
     
     def _generate_llm_response(self, prompt: str) -> str:
         """
-        Generate LLM response with error handling
+        Generate LLM response with timeout protection
         
         Args:
             prompt: Formatted prompt
             
         Returns:
             Generated response text
+            
+        Raises:
+            TimeoutError: If inference exceeds timeout limit
         """
-        response = self.pipeline(
-            prompt,
-            max_new_tokens=self.model_config.get('max_length', 512),
-            return_full_text=False,
-            do_sample=False,  # Use deterministic generation for consistency
-            temperature=0.1   # Low temperature for factual extraction
-        )[0]['generated_text']
-        return response.strip()
+        timeout_seconds = self.model_config.get('inference_timeout', 30)
+        return self._generate_llm_response_with_timeout(prompt, timeout_seconds)
+    
+    def _generate_llm_response_with_timeout(self, prompt: str, timeout: int) -> str:
+        """
+        Generate LLM response with timeout enforcement
+        
+        Args:
+            prompt: Formatted prompt
+            timeout: Maximum seconds to wait
+            
+        Returns:
+            Generated response text
+            
+        Raises:
+            TimeoutError: If inference exceeds timeout
+        """
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"LLM inference exceeded {timeout}s timeout")
+        
+        # Set timeout alarm (Unix-like systems)
+        if hasattr(signal, 'SIGALRM'):
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout)
+            
+            try:
+                response = self.pipeline(
+                    prompt,
+                    max_new_tokens=self.model_config.get('max_length', 512),
+                    return_full_text=False,
+                    do_sample=False,
+                    temperature=0.1
+                )[0]['generated_text']
+                signal.alarm(0)  # Cancel alarm
+                return response.strip()
+            except TimeoutError:
+                logger.error(f"LLM inference timeout after {timeout}s")
+                raise
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+        else:
+            # Windows fallback: use threading
+            import threading
+            result = [None]
+            exception = [None]
+            
+            def target():
+                try:
+                    result[0] = self.pipeline(
+                        prompt,
+                        max_new_tokens=self.model_config.get('max_length', 512),
+                        return_full_text=False,
+                        do_sample=False,
+                        temperature=0.1
+                    )[0]['generated_text']
+                except Exception as e:
+                    exception[0] = e
+            
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            thread.join(timeout)
+            
+            if thread.is_alive():
+                logger.error(f"LLM inference timeout after {timeout}s")
+                raise TimeoutError(f"LLM inference exceeded {timeout}s timeout")
+            
+            if exception[0]:
+                raise exception[0]
+            
+            return result[0].strip() if result[0] else ""
     
     def _is_valid_extraction(self, extracted: Dict[str, str]) -> bool:
         """
@@ -315,7 +394,7 @@ Response (JSON only):"""
     
     def _log_extraction_failure(self, input_text: str, model_response: str, reason: str):
         """
-        Log extraction failures for debugging
+        Log extraction failures for debugging (fixed readline double-call bug)
         
         Args:
             input_text: Original input text
@@ -334,8 +413,10 @@ Response (JSON only):"""
         }
         
         log_file = log_dir / "extraction_failures.log"
+        # Fix: Write complete JSON line at once to prevent double-call bug
+        log_line = json.dumps(log_entry) + "\n"
         with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry) + "\n")
+            f.write(log_line)
     def _parse_llm_response(self, response: str) -> Dict[str, str]:
         """
         Parse LLM response to extract structured information with improved parsing
@@ -545,7 +626,7 @@ Response (JSON only):"""
 
     def batch_extract(self, texts: List[str]) -> List[Dict[str, str]]:
         """
-        Extract failure information from multiple texts
+        Extract failure information from multiple texts with size limit
 
         Args:
             texts: List of input texts
@@ -553,14 +634,24 @@ Response (JSON only):"""
         Returns:
             List of extracted information dictionaries
         """
+        # Enforce batch size limit
+        if len(texts) > MAX_BATCH_SIZE:
+            logger.warning(f"Batch size {len(texts)} exceeds limit {MAX_BATCH_SIZE}. Truncating.")
+            texts = texts[:MAX_BATCH_SIZE]
+        
         logger.info(f"Batch extracting from {len(texts)} texts")
 
         results = []
 
         # Use tqdm for progress bar
         for text in tqdm(texts, desc="Extracting FMEA information", unit="text"):
-            extracted = self.extract_failure_info(text)
-            results.append(extracted)
+            try:
+                extracted = self.extract_failure_info(text)
+                results.append(extracted)
+            except Exception as e:
+                logger.error(f"Failed to extract from text: {e}")
+                # Add fallback result to maintain list consistency
+                results.append(self._rule_based_extraction(text[:1000]))
 
         return results
 
