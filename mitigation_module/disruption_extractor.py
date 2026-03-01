@@ -11,6 +11,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, validator
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 # Import dynamic route lookup for non-hardcoded cities
 try:
     from .dynamic_network import get_routes_for_city
@@ -26,17 +28,15 @@ try:
 except ImportError:
     OCR_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
-
 
 class DisruptionEvent(BaseModel):
     """
     Validated disruption event model
     Ensures clean output regardless of messy input
     """
-    target_route_id: int = Field(..., ge=1, le=10, description="Route ID affected (1-10)")
+    target_route_id: int = Field(..., ge=1, description="Route ID affected")
     impact_type: str = Field(..., description="Type of disruption (flood, strike, accident, etc.)")
-    cost_multiplier: float = Field(..., ge=1.0, le=10.0, description="Cost multiplication factor")
+    cost_multiplier: float = Field(..., ge=1.0, description="Cost multiplication factor")
     severity_score: int = Field(..., ge=1, le=10, description="Severity rating (1-10)")
     
     @validator('impact_type')
@@ -222,8 +222,7 @@ class DisruptionExtractor:
         
         # STEP 3: If still no routes, extract from specific number patterns
         if not affected_routes:
-            # Look for any standalone numbers that might be route IDs (1-8)
-      
+            # Look for any standalone numbers that might be route IDs
             all_numbers = re.findall(r'\b(\d+)\b', text_lower)
             if all_numbers:
                 affected_routes = [int(n) for n in all_numbers]
