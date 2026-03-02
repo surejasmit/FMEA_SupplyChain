@@ -6,27 +6,38 @@ Handles: Text, CSV, Images (OCR), Emails, PDFs
 
 import json
 import logging
+import re
 from typing import Dict, List, Optional, Union
 from pathlib import Path
 from pydantic import BaseModel, Field, validator
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 # Import dynamic route lookup for non-hardcoded cities
+# This feature allows the extractor to resolve city names into routes
+# at runtime. Failure here should not impact OCR functionality.
 try:
     from .dynamic_network import get_routes_for_city
     DYNAMIC_ROUTING_AVAILABLE = True
-except ImportError:
+    logger.info("Dynamic routing module loaded successfully.")
+except ImportError as e:
     DYNAMIC_ROUTING_AVAILABLE = False
-    logger.warning("Dynamic routing not available. Will use mapping config only.")
+    logger.warning("Dynamic routing not available. Will use mapping config only. ImportError: %s", e)
 
-# OCR imports (using existing FMEA OCR setup)
+# OCR support is optional and handled completely independently.
+# We only attempt to import easyocr and set OCR_AVAILABLE accordingly.
+# A missing dynamic_network module must never affect this value.
 try:
     import easyocr
     OCR_AVAILABLE = True
-except ImportError:
+    logger.info("OCR engine (easyocr) is available.")
+except ImportError as e:
     OCR_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
+    logger.warning(
+        "OCR engine not available. Install via 'pip install easyocr' to enable image extraction. ImportError: %s",
+        e,
+    )
 
 
 class DisruptionEvent(BaseModel):
@@ -34,9 +45,9 @@ class DisruptionEvent(BaseModel):
     Validated disruption event model
     Ensures clean output regardless of messy input
     """
-    target_route_id: int = Field(..., ge=1, le=10, description="Route ID affected (1-10)")
+    target_route_id: int = Field(..., ge=1, description="Route ID affected")
     impact_type: str = Field(..., description="Type of disruption (flood, strike, accident, etc.)")
-    cost_multiplier: float = Field(..., ge=1.0, le=10.0, description="Cost multiplication factor")
+    cost_multiplier: float = Field(..., ge=1.0, description="Cost multiplication factor")
     severity_score: int = Field(..., ge=1, le=10, description="Severity rating (1-10)")
     
     @validator('impact_type')
@@ -72,7 +83,9 @@ class DisruptionExtractor:
         self.ocr_reader = None
         
         if OCR_AVAILABLE:
+            # create the OCR reader lazily; log success
             self.ocr_reader = easyocr.Reader(['en'], gpu=False)
+            logger.info("Initialized OCR reader for image extraction.")
     
     def _load_mapping_config(self) -> Dict:
         """Load location to Route ID mapping"""
@@ -169,25 +182,41 @@ class DisruptionExtractor:
         TRULY DYNAMIC extraction - Extracts actual route numbers from user text
         NO PREDEFINED SCENARIOS - Responds to what user actually writes
         """
-        import re
-        
+        # `re` is imported at module level for reuse.
         text_lower = text.lower()
         disruptions = []
         
-        print(f"\n[EXTRACTOR] Processing Input: '{text[:100]}...'")
+        # log the incoming text fragment for troubleshooting
+        logger.debug("[EXTRACTOR] Processing input: %s", text[:100])
         
         # STEP 1: Extract explicitly mentioned route numbers from text
-        # Matches: "Route 3", "route 5", "R3", "routes 2 and 7", "routes 2, 5, and 8"
-        route_pattern = r'(?:route|r)\s*(\d+)|(?:routes?)\s*((?:\d+(?:\s*(?:,|and)\s*)?)+)'
-        matches = re.finditer(route_pattern, text_lower, re.IGNORECASE)
+        # We only consider routes when they are introduced with a keyword
+        # such as "route", "routes" or the abbreviation "r". This avoids
+        # the previous catch-all \b(\d+)\b fallback which pulled in unrelated
+        # numbers (years, costs, phone numbers, etc.).
+        #
+        # Supported patterns:
+        #   "route 12"  => 12
+        #   "R45"       => 45
+        #   "routes 10, 20 and 30" => [10,20,30]
+        #
+        # We intentionally *do not* fall back to grabbing every standalone
+        # digit sequence; if no context is provided we prefer an empty result
+        # and rely on mapping/config or dynamic lookup instead.
+        route_pattern = re.compile(
+            r"\b(?:route|r)\s*(\d+)\b"              # single route reference
+            r"|\b(?:routes?)\s*((?:\d+(?:\s*(?:,|and)\s*)?)+)\b",  # list of routes
+            re.IGNORECASE,
+        )
+        matches = route_pattern.finditer(text_lower)
         
         affected_routes = []
         for match in matches:
-            if match.group(1):  # Single route: "Route 3"
+            if match.group(1):  # Single route: "route 3" or "r3"
                 affected_routes.append(int(match.group(1)))
             elif match.group(2):  # Multiple routes: "routes 2, 5, and 8"
-                # Extract all numbers from the matched text
-                numbers = re.findall(r'\d+', match.group(2))
+                # Extract all numbers from the matched portion
+                numbers = re.findall(r"\d+", match.group(2))
                 affected_routes.extend([int(n) for n in numbers])
         
         # STEP 2: If no route numbers found, try location-based extraction from mapping config
@@ -199,14 +228,13 @@ class DisruptionExtractor:
             for location, routes in mappings.items():
                 if location.lower() in text_lower:
                     affected_routes.extend(routes)
-                    print(f"[EXTRACTOR] No explicit routes found, mapped '{location}' to routes {routes}")
+                    logger.debug("[EXTRACTOR] Mapped location '%s' to routes %s", location, routes)
                     break
             
             # STEP 2b: If still no match and dynamic routing is available, try dynamic lookup
             if not affected_routes and DYNAMIC_ROUTING_AVAILABLE:
                 # Extract potential city names (capitalized words that might be cities)
-                import re
-                potential_cities = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b', text)
+                potential_cities = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b", text)
                 
                 for city in potential_cities:
                     try:
@@ -214,19 +242,25 @@ class DisruptionExtractor:
                         dynamic_routes = get_routes_for_city(city, include_multihop=False)
                         if dynamic_routes:
                             affected_routes.extend(dynamic_routes[:2])  # Use first 2 routes
-                            print(f"[EXTRACTOR] Dynamically resolved '{city}' to routes {dynamic_routes[:2]}")
+                            logger.debug("[EXTRACTOR] Dynamically resolved '%s' to routes %s", city, dynamic_routes[:2])
                             break
-                    except Exception as e:
-                        # Continue trying other potential cities
+                    except Exception:
+                        # ignore and continue with other candidate cities
                         continue
         
-        # STEP 3: If still no routes, extract from specific number patterns
-        if not affected_routes:
-            # Look for any standalone numbers that might be route IDs (1-8)
-            all_numbers = re.findall(r'\b([1-8])\b', text_lower)
-            if all_numbers:
-                affected_routes = [int(n) for n in all_numbers]
-                print(f"[EXTRACTOR] Extracted standalone numbers as routes: {affected_routes}")
+        # STEP 3: No generic number extraction
+        # We removed the previous catch-all that treated every digit sequence as a
+        # potential route ID. That behaviour produced false positives from years,
+        # costs, or other unrelated numeric data. If the text does not explicitly
+        # mention a route or map to a location, we do *not* guess at standalone
+        # numbers. This keeps the output clean and predictable.
+        #
+        # (If future requirements demand a restricted fallback, it should still
+        # require a contextual keyword such as "route" preceding the number.)
+        #
+        # At this point affected_routes remains empty and later code will either
+        # map a location or return an empty list with a warning.
+        # no debug print needed here
         
         # STEP 4: Determine severity/multiplier from keywords (DYNAMIC based on text)
         cost_multiplier = 1.5  # Base default
@@ -260,7 +294,7 @@ class DisruptionExtractor:
         multiplier_match = re.search(multiplier_pattern, text_lower)
         if multiplier_match:
             cost_multiplier = float(multiplier_match.group(1))
-            print(f"[EXTRACTOR] Found explicit multiplier in text: {cost_multiplier}x")
+            logger.debug("[EXTRACTOR] Found explicit multiplier in text: %sx", cost_multiplier)
         
         # GRACEFUL FALLBACK if no routes could be extracted
         if not affected_routes:
@@ -272,15 +306,14 @@ class DisruptionExtractor:
                 f"  2. Add location to mapping_config.json, OR\n"
                 f"  3. Mention a recognized location (check mapping_config.json for available locations)"
             )
-            print(f"[EXTRACTOR] {warning_msg}")
-            logger.warning(warning_msg)
+            logger.warning("[EXTRACTOR] %s", warning_msg)
             # Return empty list instead of raising error
             return []
         
-        print(f"[EXTRACTOR] ✓ Extracted Routes: {affected_routes}")
-        print(f"[EXTRACTOR] ✓ Impact Type: {impact_type}")
-        print(f"[EXTRACTOR] ✓ Cost Multiplier: {cost_multiplier}x")
-        print(f"[EXTRACTOR] ✓ Severity: {severity_score}/10")
+        logger.debug("[EXTRACTOR] ✓ Extracted Routes: %s", affected_routes)
+        logger.debug("[EXTRACTOR] ✓ Impact Type: %s", impact_type)
+        logger.debug("[EXTRACTOR] ✓ Cost Multiplier: %sx", cost_multiplier)
+        logger.debug("[EXTRACTOR] ✓ Severity: %s/10", severity_score)
         
         # Create disruption for each affected route
         for route_id in set(affected_routes):  # Remove duplicates

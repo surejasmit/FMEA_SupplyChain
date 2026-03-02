@@ -13,6 +13,35 @@ from mitigation_module import TransportOptimizer, DisruptionExtractor
 from mitigation_module.network_config import validate_network, ROUTE_MAP
 
 
+def test_import_independence():
+    """Ensure OCR availability is unaffected by dynamic_network import failures."""
+    import importlib, sys, builtins
+
+    # Capture original state
+    import mitigation_module.disruption_extractor as de
+    orig_ocr = de.OCR_AVAILABLE
+
+    # Prepare a fake import that fails for dynamic_network
+    real_import = builtins.__import__
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.endswith('dynamic_network'):
+            raise ImportError("simulated failure")
+        return real_import(name, globals, locals, fromlist, level)
+
+    builtins.__import__ = fake_import
+    try:
+        # force reload to re-run import logic under patched importer
+        de_reloaded = importlib.reload(de)
+        # dynamic routing should be disabled
+        assert not de_reloaded.DYNAMIC_ROUTING_AVAILABLE
+        # OCR availability should remain based solely on easyocr import
+        assert de_reloaded.OCR_AVAILABLE == orig_ocr
+    finally:
+        builtins.__import__ = real_import
+
+    print("✅ import independence verified")
+
+
 def test_network_validation():
     """Test 1: Network Configuration"""
     print("=" * 60)
