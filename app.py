@@ -401,11 +401,13 @@ def main():
         """)
     
     # Main content area
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📝 Generate FMEA", 
         "🎯 PFMEA Generator", 
         "🚚 Supply Chain Risk",
-        "📊 Analytics",
+        "🔄 Model Comparison",
+        "📊 Analytics", 
+        "🔍 Disagreement Heatmap",
         "📈 History & Trends",
         "ℹ️ Help"
     ])
@@ -1443,7 +1445,306 @@ def main():
             st.error(f"Mitigation module not available: {e}")
             st.info("Make sure mitigation_module is properly installed")
     
+    
     with tab4:
+        st.markdown('<div class="sub-header">🔄 Multi-Model Comparison Mode</div>', unsafe_allow_html=True)
+        st.markdown("Compare FMEA outputs from multiple LLMs side-by-side")
+        
+        # Import comparison module
+        from multi_model_comparison import MultiModelComparator, ComparisonVisualizationHelper
+        
+        st.markdown("### 🎯 Model Selection & Input")
+        
+        # Model selection
+        available_models = [
+            "mistralai/Mistral-7B-Instruct-v0.2",
+            "meta-llama/Llama-2-7b-chat-hf",
+            "gpt2",
+            "google/flan-t5-large",
+            "Rule-based (No LLM)"
+        ]
+        
+        selected_models = st.multiselect(
+            "Select 2 or more models for comparison:",
+            options=available_models,
+            default=["Rule-based (No LLM)", "gpt2"],
+            help="Choose at least 2 models to enable comparison. Hold Ctrl/Cmd to select multiple."
+        )
+        
+        # Input method
+        comparison_input_type = st.radio(
+            "Input Type:",
+            ["Text Input", "Structured File (CSV/Excel)"]
+        )
+        
+        comparison_input_data = None
+        
+        if comparison_input_type == "Text Input":
+            comparison_text = st.text_area(
+                "Enter text for comparison:",
+                height=150,
+                placeholder="Paste customer reviews, failure reports, or complaint text...",
+                help="This text will be analyzed by all selected models"
+            )
+            comparison_input_data = comparison_text
+        else:
+            comparison_file = st.file_uploader(
+                "Upload CSV or Excel file",
+                type=['csv', 'xlsx', 'xls'],
+                key='comparison_file'
+            )
+            if comparison_file:
+                comparison_input_data = comparison_file
+        
+        # Generate comparison
+        if selected_models and len(selected_models) >= 2 and comparison_input_data and st.button("🚀 Generate Multi-Model Comparison", type="primary", use_container_width=True):
+            if len(selected_models) < 2:
+                st.error("Please select at least 2 models for comparison")
+            else:
+                with st.spinner("Generating FMEA from multiple models..."):
+                    try:
+                        generator = initialize_generator(config)
+                        
+                        # Prepare input
+                        if comparison_input_type == "Text Input":
+                            # Split text into meaningful chunks (by paragraphs or sentences)
+                            # This allows models to extract multiple failure modes
+                            text_chunks = []
+                            # Split by double newline (paragraphs)
+                            paragraphs = [p.strip() for p in comparison_text.split('\n\n') if p.strip()]
+                            
+                            if len(paragraphs) > 1:
+                                # Multiple paragraphs - use them as chunks
+                                text_chunks = paragraphs
+                            else:
+                                # Single paragraph - split by single newline or periods
+                                sentences = [s.strip() for s in comparison_text.replace('\n', '. ').split('. ') if s.strip() and len(s.strip()) > 20]
+                                
+                                # Group sentences into chunks of 2-3 sentences each
+                                chunk_size = 3
+                                for i in range(0, len(sentences), chunk_size):
+                                    chunk = '. '.join(sentences[i:i+chunk_size])
+                                    if chunk:
+                                        text_chunks.append(chunk)
+                            
+                            # If we ended up with no chunks, use the whole text
+                            if not text_chunks:
+                                text_chunks = [comparison_text]
+                            
+                            comparison_results = generator.generate_multi_model_comparison(
+                                text_input=text_chunks,
+                                model_names=selected_models,
+                                is_file=False
+                            )
+                        else:
+                            # Save file temporarily
+                            temp_path = Path(f"temp_comparison_{comparison_file.name}")
+                            with open(temp_path, "wb") as f:
+                                f.write(comparison_file.getbuffer())
+                            
+                            comparison_results = generator.generate_multi_model_from_structured(
+                                file_path=str(temp_path),
+                                model_names=selected_models
+                            )
+                            
+                            temp_path.unlink()
+                        
+                        # Store results in session state
+                        st.session_state['comparison_results'] = comparison_results
+                        
+                        # Show summary of generated results
+                        num_failure_modes = len(comparison_results['comparison_results']['comparison_df'])
+                        st.success(f"✅ Multi-model comparison completed! Generated {num_failure_modes} failure modes for comparison.")
+                        
+                        # Debug: Show individual model results
+                        with st.expander("🔍 Debug: Individual Model Results"):
+                            for model_name, model_df in comparison_results['individual_results'].items():
+                                st.write(f"**{model_name}**: {len(model_df)} failure modes")
+                                if len(model_df) > 0:
+                                    st.dataframe(model_df.head())
+                        
+                    except ValueError as e:
+                        st.error(f"Input validation error: {e}")
+                    except Exception as e:
+                        st.error(f"Error during comparison: {e}")
+                        import traceback
+                        st.code(traceback.format_exc())
+        
+        # Display comparison table
+        if 'comparison_results' in st.session_state:
+            st.markdown("---")
+            st.markdown("### 📋 Side-by-Side Comparison")
+            
+            results = st.session_state['comparison_results']
+            comparison_df = results['comparison_results']['comparison_df']
+            disagreement_matrix = results['comparison_results']['disagreement_matrix']
+            individual_results = results['individual_results']
+            model_names = results['comparison_results']['model_names']
+            
+            # Compute consensus for AI Confidence column
+            from src.analytics import calculate_consensus_scores as _calc_cons
+            _cons_df = _calc_cons(individual_results)
+            _cons_map = {}
+            if not _cons_df.empty:
+                _cons_map = dict(zip(_cons_df['failure_mode'], _cons_df['confidence_label']))
+            
+            # Debug info
+            st.info(f"📊 Comparison DataFrame has {len(comparison_df)} rows")
+            
+            if not comparison_df.empty:
+                # Create comparison display
+                comparison_display = []
+                
+                for idx, row in comparison_df.iterrows():
+                    disagreement = disagreement_matrix.get(idx, {})
+                    
+                    # Determine disagreement visual
+                    has_disagreement = disagreement.get('has_any_disagreement', False)
+                    disagreement_level = 3 if has_disagreement else 0
+                    
+                    # Look up AI Confidence from consensus scores
+                    fm_val = row.get('failure_mode', '')
+                    ai_conf = _cons_map.get(fm_val, _cons_map.get(str(fm_val).strip(), 'N/A'))
+                    
+                    display_row = {
+                        'Disagreement': '🔴' if disagreement_level > 0 else '🟢',
+                        'AI Confidence': ai_conf,
+                        'Failure Mode': row['failure_mode'],
+                        'Effect': row['effect']
+                    }
+                    
+                    # Add model scores
+                    for model in model_names:
+                        s_col = f'{model}_severity'
+                        o_col = f'{model}_occurrence'
+                        d_col = f'{model}_detection'
+                        r_col = f'{model}_rpn'
+                        
+                        if s_col in comparison_df.columns and pd.notna(row[s_col]):
+                            display_row[f'{model} S|O|D|RPN'] = f"{int(row[s_col])}|{int(row[o_col])}|{int(row[d_col])}|{int(row[r_col])}"
+                        else:
+                            display_row[f'{model} S|O|D|RPN'] = "N/A"
+                    
+                    comparison_display.append(display_row)
+                
+                comparison_display_df = pd.DataFrame(comparison_display)
+                
+                if len(comparison_display_df) > 0:
+                    st.dataframe(comparison_display_df, use_container_width=True, height=400)
+                else:
+                    st.warning("⚠️ Comparison display is empty")
+                
+                # Show detailed comparison for high disagreement cases
+                high_disagreement = results['comparison_results']['high_disagreement_cases']
+                
+                if high_disagreement:
+                    st.markdown("---")
+                    st.markdown("### 🔴 High Disagreement Cases")
+                    st.markdown("Failure modes where models significantly differ in their assessments:")
+                    
+                    for i, case in enumerate(high_disagreement[:5], 1):  # Show top 5
+                        with st.expander(f"**Case {i}: {case['failure_mode']}** (S-range: {case['severity_range']}, RPN-range: {case['rpn_range']})"):
+                            st.markdown(f"**Failure Mode:** {case['failure_mode']}")
+                            st.markdown(f"**Effect:** {case['effect']}")
+                            st.markdown(f"**Disagreement Categories:** {', '.join(case['disagreement_categories'])}")
+                            
+                            # Show individual model scores
+                            scores_data = []
+                            for model in model_names:
+                                if f'{model}_severity' in comparison_df.columns:
+                                    model_idx = comparison_df[comparison_df['failure_mode'] == case['failure_mode']].index[0]
+                                    model_row = comparison_df.loc[model_idx]
+                                    
+                                    # Check if model has values (not NaN)
+                                    if pd.notna(model_row[f'{model}_severity']):
+                                        scores_data.append({
+                                            'Model': model,
+                                            'Severity': int(model_row[f'{model}_severity']),
+                                            'Occurrence': int(model_row[f'{model}_occurrence']),
+                                            'Detection': int(model_row[f'{model}_detection']),
+                                            'RPN': int(model_row[f'{model}_rpn']),
+                                            'Priority': model_row[f'{model}_priority']
+                                        })
+                                    else:
+                                        scores_data.append({
+                                            'Model': model,
+                                            'Severity': 'N/A',
+                                            'Occurrence': 'N/A',
+                                            'Detection': 'N/A',
+                                            'RPN': 'N/A',
+                                            'Priority': 'N/A'
+                                        })
+                            
+                            if scores_data:
+                                scores_df = pd.DataFrame(scores_data)
+                                st.dataframe(scores_df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ No comparison data available. The models may not have produced comparable failure modes from the input text.")
+                st.info("💡 Tip: Try providing more detailed text about specific failure scenarios, or try different model combinations.")
+                
+                # Still show individual results if available
+                if individual_results:
+                    st.markdown("### 📦 Individual Model Results")
+                    for model_name, model_df in individual_results.items():
+                        with st.expander(f"**{model_name}**: {len(model_df)} failure modes"):
+                            st.dataframe(model_df, use_container_width=True)
+            
+            # Display comparative summary (only if comparison_df is not empty)
+            if not comparison_df.empty:
+                st.markdown("---")
+                st.markdown("### 💡 Comparative Summary Insights")
+                
+                summary = results['comparison_results']['summary']
+                
+                if summary.get('key_insights'):
+                    for insight in summary['key_insights']:
+                        st.info(insight)
+                
+                # Model characteristics
+                st.markdown("#### 🎯 Model Characteristics")
+                
+                col_char1, col_char2 = st.columns(2)
+                
+                with col_char1:
+                    if summary.get('high_severity_model'):
+                        st.markdown(f"**Assigns Higher Severity:** {summary['high_severity_model']}")
+                    if summary.get('conservative_severity_model'):
+                        st.markdown(f"**More Conservative Severity:** {summary['conservative_severity_model']}")
+                
+                with col_char2:
+                    if summary.get('optimistic_detection_model'):
+                        st.markdown(f"**Optimistic Detection:** {summary['optimistic_detection_model']}")
+                    if summary.get('conservative_detection_model'):
+                        st.markdown(f"**Conservative Detection:** {summary['conservative_detection_model']}")
+                
+                # Export comparison results
+                st.markdown("---")
+                st.markdown("### 💾 Export Comparison Results")
+                
+                # Export comparison summary
+                csv_comparison = comparison_display_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Comparison Table (CSV)",
+                    data=csv_comparison,
+                    file_name=f"model_comparison_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+                
+                # Export individual results
+                with st.expander("📦 Export Individual Model Results"):
+                    for model_name, model_fmea in individual_results.items():
+                        csv_data = model_fmea.to_csv(index=False)
+                        st.download_button(
+                            label=f"📥 {model_name}",
+                            data=csv_data,
+                            file_name=f"fmea_{model_name.replace('/', '_')}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key=f"download_{model_name}"
+                        )
+        else:
+            st.info("👆 Select models, input data, and click 'Generate Multi-Model Comparison' to see results")
+    
+    with tab5:
         st.markdown('<div class="sub-header">Analytics & Visualization</div>', unsafe_allow_html=True)
         
         if 'fmea_df' in st.session_state:
@@ -1483,8 +1784,324 @@ def main():
                 st.write(fmea_df['Detection'].describe())
         else:
             st.info("Generate an FMEA first to see analytics.")
-    
-    with tab5:
+
+    with tab6:
+        st.markdown('<div class="sub-header">🔍 Multi-Model Disagreement Heatmap & Variance Analysis</div>', unsafe_allow_html=True)
+        st.markdown("Visualize where different LLMs disagree on FMEA scoring and identify low-confidence areas.")
+        
+        import plotly.express as px
+        from src.analytics import (
+            calculate_fmea_variance,
+            generate_disagreement_matrix,
+            generate_model_score_matrix,
+            identify_high_variance_items,
+            calculate_consensus_scores,
+            calculate_average_agreement,
+            flag_for_expert_review,
+            identify_field_level_disagreements,
+            prepare_box_plot_data,
+            normalize_model_results,
+        )
+        
+        if 'comparison_results' in st.session_state:
+            results = st.session_state['comparison_results']
+            individual_results = results.get('individual_results', {})
+            model_names_list = list(individual_results.keys())
+            
+            if len(model_names_list) >= 2:
+                metrics_list = ["Severity", "Occurrence", "Detection", "RPN"]
+
+                # Normalize scores to 1-10 / 1-1000 scales
+                norm_results = normalize_model_results(individual_results)
+
+                # ──────────────────────────────────────
+                # A. Confidence Indicator (Gauge) — top of page
+                # ──────────────────────────────────────
+                st.subheader("🎯 Overall Model Agreement")
+                bench_cfg = config.get('benchmarking', {})
+                agreement_thresh = bench_cfg.get('agreement_threshold', 0.8)
+                agreement_info = calculate_average_agreement(norm_results, agreement_thresh)
+
+                g_col1, g_col2, g_col3, g_col4 = st.columns(4)
+                avg_conf = agreement_info['average_confidence']
+                delta_pct = agreement_info['pct_high_agreement'] - 50  # delta vs 50% baseline
+                with g_col1:
+                    st.metric(
+                        "Avg Confidence",
+                        f"{avg_conf:.1%}",
+                        delta=f"{delta_pct:+.1f}% vs 50% baseline",
+                        delta_color="normal"
+                    )
+                with g_col2:
+                    st.metric("Total Items", agreement_info['total_items'])
+                with g_col3:
+                    st.metric("High Agreement", agreement_info['high_count'],
+                              delta=f"{agreement_info['pct_high_agreement']:.0f}%")
+                with g_col4:
+                    st.metric("Low Agreement", agreement_info['low_count'],
+                              delta=f"-{agreement_info['low_count']}" if agreement_info['low_count'] else "0",
+                              delta_color="inverse")
+
+                st.markdown("---")
+
+                # ──────────────────────────────────────
+                # B. Disagreement Heatmap (plotly imshow)
+                # ──────────────────────────────────────
+                st.subheader("🔍 Model Disagreement Heatmap")
+                st.markdown("Cell values represent the **standard deviation** across models. Higher values (red) = more disagreement.")
+                
+                disagreement_df = generate_disagreement_matrix(norm_results, metrics=metrics_list)
+                
+                if not disagreement_df.empty:
+                    fig_heatmap = px.imshow(
+                        disagreement_df,
+                        text_auto=True,
+                        labels=dict(x="FMEA Metric", y="Failure Mode", color="Std Dev"),
+                        aspect="auto",
+                        color_continuous_scale="RdYlGn_r",
+                        title="Model Risk Agreement Matrix (Std Dev across LLMs)"
+                    )
+                    fig_heatmap.update_layout(height=max(400, len(disagreement_df) * 35))
+                    st.plotly_chart(fig_heatmap, use_container_width=True)
+                else:
+                    st.warning("Could not generate disagreement matrix from available data.")
+                
+                st.markdown("---")
+
+                # ──────────────────────────────────────
+                # C. RPN Variance Chart (Box & Whisker)
+                # ──────────────────────────────────────
+                st.subheader("📦 RPN Variance — Box & Whisker Plot")
+                st.markdown("Shows the spread of risk scores across models for each failure mode.")
+
+                box_metric = st.selectbox(
+                    "Select metric for box plot:",
+                    metrics_list,
+                    index=3,  # default to RPN
+                    key="box_plot_metric_select"
+                )
+
+                box_df = prepare_box_plot_data(norm_results, metric=box_metric)
+                if not box_df.empty:
+                    fig_box = px.box(
+                        box_df, x="Failure Mode", y=box_metric, color="Model",
+                        title=f"{box_metric} Score Distribution Across Models",
+                        points="all"
+                    )
+                    fig_box.update_layout(height=500, xaxis_tickangle=-45)
+                    st.plotly_chart(fig_box, use_container_width=True)
+                else:
+                    st.info("No data available for box plot.")
+
+                st.markdown("---")
+                
+                # ──────────────────────────────────────
+                # D. Per-Metric Score Heatmaps (Model x FM)
+                # ──────────────────────────────────────
+                st.subheader("📊 Per-Metric Model Score Heatmaps")
+                selected_metric = st.selectbox(
+                    "Select metric to visualize:",
+                    metrics_list,
+                    key="heatmap_metric_select"
+                )
+                
+                score_matrix = generate_model_score_matrix(norm_results, metric=selected_metric)
+                if not score_matrix.empty:
+                    fig_scores = px.imshow(
+                        score_matrix,
+                        text_auto=True,
+                        labels=dict(x="LLM Model", y="Failure Mode", color=f"{selected_metric} Score"),
+                        aspect="auto",
+                        color_continuous_scale="RdYlGn_r",
+                        title=f"{selected_metric} Scores by Model"
+                    )
+                    fig_scores.update_layout(height=max(400, len(score_matrix) * 35))
+                    st.plotly_chart(fig_scores, use_container_width=True)
+                
+                st.markdown("---")
+
+                # ──────────────────────────────────────
+                # E. Consensus / Confidence Table
+                # ──────────────────────────────────────
+                st.subheader("🤝 Consensus & AI Confidence Scores")
+                st.markdown(
+                    "Confidence = 1 − (σ / max_range). "
+                    "**High** = all models agree, **Low** = significant disagreement."
+                )
+
+                consensus_df = calculate_consensus_scores(norm_results, metrics=metrics_list)
+                if not consensus_df.empty:
+                    display_consensus = consensus_df.copy()
+                    # Colour the confidence label
+                    def _label_color(val):
+                        if val == "High":
+                            return "background-color: #c6efce; color: #006100"
+                        elif val == "Medium":
+                            return "background-color: #ffeb9c; color: #9c6500"
+                        else:
+                            return "background-color: #ffc7ce; color: #9c0006"
+
+                    styled_consensus = display_consensus.style.map(
+                        _label_color, subset=["confidence_label"]
+                    )
+                    st.dataframe(styled_consensus, use_container_width=True, height=350)
+                else:
+                    st.info("Not enough data for consensus scoring.")
+
+                st.markdown("---")
+                
+                # ──────────────────────────────────────
+                # F. Variance Analysis Table with Delta Highlighting
+                # ──────────────────────────────────────
+                st.subheader("📊 Variance Analysis")
+                st.markdown(
+                    "Fields with **high variance** (red) indicate **low AI confidence** — models disagree significantly. "
+                    "Rows flagged for **Manual Expert Review** are highlighted."
+                )
+                
+                variance_df = calculate_fmea_variance(norm_results, metrics=metrics_list)
+                
+                if not variance_df.empty:
+                    # Expert-review flags
+                    var_threshold_cfg = bench_cfg.get('variance_threshold', 2.5)
+                    flagged_df = flag_for_expert_review(variance_df, variance_threshold=var_threshold_cfg)
+
+                    # Build display columns
+                    display_cols = ["failure_mode"]
+                    style_cols = []
+                    for m in metrics_list:
+                        display_cols.extend([f"{m}_mean", f"{m}_std", f"{m}_range"])
+                        style_cols.extend([f"{m}_std", f"{m}_range"])
+                    display_cols.append("expert_review_flag")
+
+                    avail_cols = [c for c in display_cols if c in flagged_df.columns]
+                    display_df = flagged_df[avail_cols].copy()
+                    display_df.columns = [c.replace("_", " ").title() for c in avail_cols]
+
+                    # Highlight rows flagged for review
+                    def _highlight_review(row):
+                        flag_col = "Expert Review Flag"
+                        if flag_col in row.index and "Expert Review" in str(row[flag_col]):
+                            return ["background-color: #fff3cd"] * len(row)
+                        return [""] * len(row)
+
+                    nice_style_cols = [c.replace("_", " ").title() for c in style_cols if c.replace("_", " ").title() in display_df.columns]
+
+                    styled_var = display_df.style.apply(_highlight_review, axis=1)
+                    if nice_style_cols:
+                        styled_var = styled_var.background_gradient(cmap='Reds', subset=nice_style_cols)
+                    st.dataframe(styled_var, use_container_width=True, height=400)
+                    
+                    st.markdown("---")
+                    
+                    # ──────────────────────────────────────
+                    # G. High Variance Items
+                    # ──────────────────────────────────────
+                    st.subheader("🔴 High-Variance Failure Modes")
+                    variance_threshold = st.slider(
+                        "Std Dev Threshold for flagging high variance:",
+                        min_value=0.5, max_value=5.0, value=2.0, step=0.5,
+                        key="variance_threshold_slider"
+                    )
+                    
+                    high_var_items = identify_high_variance_items(variance_df, threshold_std=variance_threshold, metric="RPN")
+                    
+                    if not high_var_items.empty:
+                        st.warning(f"⚠️ {len(high_var_items)} failure mode(s) exceed the RPN std dev threshold of {variance_threshold}.")
+                        for _, row in high_var_items.iterrows():
+                            with st.expander(f"**{row['failure_mode']}** — RPN Std: {row['RPN_std']:.2f}, Range: {row['RPN_range']:.0f}"):
+                                c1, c2, c3, c4 = st.columns(4)
+                                with c1:
+                                    st.metric("Severity Std", f"{row['Severity_std']:.2f}")
+                                with c2:
+                                    st.metric("Occurrence Std", f"{row['Occurrence_std']:.2f}")
+                                with c3:
+                                    st.metric("Detection Std", f"{row['Detection_std']:.2f}")
+                                with c4:
+                                    st.metric("RPN Std", f"{row['RPN_std']:.2f}")
+                                st.markdown(
+                                    f"**Mean Scores:** Severity={row['Severity_mean']:.1f}, "
+                                    f"Occurrence={row['Occurrence_mean']:.1f}, "
+                                    f"Detection={row['Detection_mean']:.1f}, "
+                                    f"RPN={row['RPN_mean']:.1f}"
+                                )
+                    else:
+                        st.success(f"✅ No failure modes exceed the RPN std dev threshold of {variance_threshold}. Models are in reasonable agreement.")
+                    
+                    st.markdown("---")
+
+                    # ──────────────────────────────────────
+                    # H. Field-Level Outlier Detection
+                    # ──────────────────────────────────────
+                    st.subheader("🔎 Field-Level Disagreements (Outlier Detection)")
+                    st.markdown(
+                        "Cases where one model rates **Critical** and another rates **Minor** "
+                        "for the same failure mode."
+                    )
+
+                    field_disagree = identify_field_level_disagreements(norm_results, severity_threshold=3)
+
+                    if field_disagree:
+                        for item in field_disagree[:10]:
+                            with st.expander(
+                                f"**{item['failure_mode']}** — {item['metric']} gap: {item['gap']:.0f}"
+                            ):
+                                st.markdown(
+                                    f"**Highest:** {item['outlier_high_model']} "
+                                    f"→ {item['outlier_high_score']:.0f}"
+                                )
+                                st.markdown(
+                                    f"**Lowest:** {item['outlier_low_model']} "
+                                    f"→ {item['outlier_low_score']:.0f}"
+                                )
+                                st.json(item['all_scores'])
+                    else:
+                        st.success("No extreme field-level disagreements detected.")
+
+                    st.markdown("---")
+                    
+                    # ──────────────────────────────────────
+                    # I. Export Section
+                    # ──────────────────────────────────────
+                    st.subheader("💾 Export Benchmark Data")
+                    exp_c1, exp_c2, exp_c3 = st.columns(3)
+
+                    with exp_c1:
+                        csv_variance = flagged_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Variance Analysis (CSV)",
+                            data=csv_variance,
+                            file_name=f"variance_analysis_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key="download_variance_csv"
+                        )
+                    with exp_c2:
+                        csv_disagreement = disagreement_df.to_csv()
+                        st.download_button(
+                            label="📥 Disagreement Matrix (CSV)",
+                            data=csv_disagreement,
+                            file_name=f"disagreement_matrix_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                            mime="text/csv",
+                            key="download_disagreement_csv"
+                        )
+                    with exp_c3:
+                        if not consensus_df.empty:
+                            csv_consensus = consensus_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Consensus Scores (CSV)",
+                                data=csv_consensus,
+                                file_name=f"consensus_scores_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                key="download_consensus_csv"
+                            )
+                else:
+                    st.warning("Could not compute variance from available data.")
+            else:
+                st.info("Need at least 2 model results for disagreement analysis. Go to the **🔄 Model Comparison** tab and run a comparison first.")
+        else:
+            st.info("👆 No comparison data available yet. Go to the **🔄 Model Comparison** tab, select 2+ models, and generate a comparison to see the disagreement heatmap and variance analysis here.")
+
+    with tab7:
         st.markdown('<div class="sub-header">📈 History & Trends</div>', unsafe_allow_html=True)
         
         tracker = FMEAHistoryTracker("history")
@@ -1642,8 +2259,7 @@ def main():
             ])
             
             st.dataframe(runs_df, use_container_width=True, hide_index=True)
-    
-    with tab6:
+    with tab8:
         st.markdown('<div class="sub-header">Help & Documentation</div>', unsafe_allow_html=True)
         
         st.markdown("""
